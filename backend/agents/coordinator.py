@@ -23,6 +23,7 @@ from agents.planner_agent import PlannerAgent
 from agents.adjustment_agent import AdjustmentAgent
 from agents.nutrition_agent import NutritionAgent
 from agents.coach_agent import CoachAgent
+from agents.modification_agent import ModificationAgent
 from database import db
 
 MODEL = os.getenv("MODEL_ID", "gemini-2.5-pro")
@@ -35,7 +36,10 @@ Classify the user message into EXACTLY ONE of these intents:
 - "profile"      – user is providing profile data (weight, goal, diet, time, location) or updating it
 - "log_activity" – user is logging a workout (done/skipped) or food intake
 - "get_plan"     – user wants to see their plan, generate a plan, or ask about exercises
-- "nutrition"    – user is asking about food, meals, diet, or calories
+- "modify_plan"  – user wants to CHANGE their existing plan: disliked exercises, preferred foods,
+                   replacing meals, requesting different workouts, suggesting alternatives,
+                   or saying they don't like something in their current plan
+- "nutrition"    – user is asking about food, meals, diet, or calories (general advice, not plan edits)
 - "motivation"   – user wants encouragement, is feeling down, or asking about progress
 - "general"      – greetings, anything else
 
@@ -51,6 +55,7 @@ class CoordinatorAgent:
         self.adjustment_agent = AdjustmentAgent()
         self.nutrition_agent = NutritionAgent()
         self.coach_agent = CoachAgent()
+        self.modification_agent = ModificationAgent()
 
     async def handle(
         self,
@@ -128,6 +133,19 @@ class CoordinatorAgent:
                 # User wants to see/discuss the plan
                 result = await self.planner_agent.run(message, history, ctx)
                 result["structured_data"]["plan"] = existing_plan["plan_data"]
+
+        elif intent == "modify_plan":
+            existing_plan = await db.get_weekly_plan(user_id)
+            if not existing_plan:
+                # No plan to modify — generate one first
+                result = await self.planner_agent.run("generate", [], ctx)
+                result["reply"] = (
+                    "You don't have a plan yet, so I've generated one for you! "
+                    "You can now ask me to change any part of it."
+                )
+            else:
+                result = await self.modification_agent.run(message, history, ctx)
+                result["structured_data"]["refresh_calendar"] = True
 
         elif intent == "nutrition":
             result = await self.nutrition_agent.run(message, history, ctx)

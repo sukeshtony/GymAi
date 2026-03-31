@@ -161,6 +161,64 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "required": ["user_id", "date", "status"],
         },
     },
+    {
+        "name": "modify_plan_days",
+        "description": (
+            "Update one or more days in the weekly plan with new exercises, meals, or both. "
+            "Use when the user wants to change workouts or diet preferences. "
+            "Only include the fields you want to change in each day entry."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string"},
+                "reason":  {"type": "string", "description": "Why the plan is being modified"},
+                "changes": {
+                    "type": "array",
+                    "description": "List of per-day changes to apply",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
+                            "workout_type": {"type": "string", "description": "e.g. Push, Yoga, Cardio, Rest"},
+                            "exercises": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name":         {"type": "string"},
+                                        "sets":         {"type": "integer"},
+                                        "reps":         {"type": "string"},
+                                        "duration_min": {"type": "integer"},
+                                        "notes":        {"type": "string"},
+                                    },
+                                    "required": ["name"],
+                                },
+                            },
+                            "meals": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "meal_type":  {"type": "string", "enum": ["breakfast", "lunch", "snack", "dinner"]},
+                                        "items":      {"type": "array", "items": {"type": "string"}},
+                                        "calories":   {"type": "integer"},
+                                        "protein_g":  {"type": "integer"},
+                                        "notes":      {"type": "string"},
+                                    },
+                                    "required": ["meal_type", "items", "calories"],
+                                },
+                            },
+                            "total_calories":   {"type": "integer"},
+                            "adjustment_note":  {"type": "string"},
+                        },
+                        "required": ["date"],
+                    },
+                },
+            },
+            "required": ["user_id", "changes", "reason"],
+        },
+    },
 ]
 
 
@@ -173,7 +231,11 @@ async def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Any:
 
     if tool_name == "save_user_profile":
         user_id = tool_input.pop("user_id")
+        new_weight = tool_input.get("weight")
         updated = await db.upsert_user(user_id, tool_input)
+        # Record a weight snapshot every time weight is explicitly provided
+        if new_weight is not None:
+            await db.record_weight(user_id, float(new_weight))
         missing = await db.recalculate_missing_fields(user_id)
         return {
             "success": True,
@@ -298,6 +360,46 @@ async def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Any:
                 )
                 return {"success": True}
         return {"error": "Date not found in plan"}
+
+    elif tool_name == "modify_plan_days":
+        user_id = tool_input["user_id"]
+        reason  = tool_input.get("reason", "User requested plan modification")
+        changes = tool_input.get("changes", [])
+
+        plan = await db.get_weekly_plan(user_id)
+        if not plan:
+            return {"error": "No plan found to modify."}
+
+        days = plan["plan_data"]["days"]
+        modified_dates: List[str] = []
+
+        for change in changes:
+            target_date = change.get("date")
+            for i, day in enumerate(days):
+                if day["date"] == target_date:
+                    if "exercises" in change:
+                        day["exercises"] = change["exercises"]
+                    if "meals" in change:
+                        day["meals"] = change["meals"]
+                    if "workout_type" in change:
+                        day["workout_type"] = change["workout_type"]
+                    if "total_calories" in change:
+                        day["total_calories"] = change["total_calories"]
+                    day["status"] = "adjusted"
+                    day["adjustment_note"] = change.get("adjustment_note", reason)
+                    await db.update_day_plan(user_id, plan["week_start"], i, day)
+                    modified_dates.append(target_date)
+                    break
+
+        if modified_dates:
+            await db.save_adjustment(
+                user_id=user_id,
+                adjustment_date=modified_dates[0],
+                reason=reason,
+                changes={"modified_dates": modified_dates, "type": "user_preference"},
+            )
+
+        return {"success": True, "modified_dates": modified_dates, "reason": reason}
 
     return {"error": f"Unknown tool: {tool_name}"}
 

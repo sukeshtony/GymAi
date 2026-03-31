@@ -81,13 +81,91 @@ function showToast(msg, type = 'success') {
 // ── User ID Management ─────────────────────────────────────
 
 function initUserId() {
-  let uid = localStorage.getItem('gymai_user_id');
+  const uid = localStorage.getItem('gymai_user_id');
+  const appShell = document.getElementById('app-shell');
+  const authShell = document.getElementById('auth-shell');
+
   if (!uid) {
-    uid = 'user_' + Math.random().toString(36).slice(2, 10);
-    localStorage.setItem('gymai_user_id', uid);
+    appShell.style.display = 'none';
+    authShell.style.display = 'flex';
+    return;
   }
+  
+  appShell.style.display = 'flex';
+  authShell.style.display = 'none';
+  
   state.userId = uid;
+  const uname = localStorage.getItem('gymai_user_name') || 'Athlete';
   document.querySelector('.user-info .uid').textContent = uid.slice(0, 12) + '…';
+  document.querySelector('.user-info .name').textContent = uname;
+  
+  const initials = uname.slice(0, 2).toUpperCase();
+  const avatarEl = document.getElementById('avatar-initials') || document.querySelector('.user-avatar');
+  if (avatarEl) avatarEl.textContent = initials;
+  
+  showView('dashboard');
+}
+
+// ── Auth Logic ─────────────────────────────────────────────
+
+function toggleAuthMode(mode) {
+  document.getElementById('login-form').style.display = mode === 'login' ? 'block' : 'none';
+  document.getElementById('register-form').style.display = mode === 'register' ? 'block' : 'none';
+}
+
+async function handleLogin() {
+  const email = document.getElementById('auth-email-login').value;
+  const password = document.getElementById('auth-password-login').value;
+  if (!email || !password) return showToast('Please enter email and password', 'error');
+
+  const btn = event.target;
+  const oldText = btn.textContent;
+  btn.textContent = 'Signing in...';
+  btn.disabled = true;
+
+  try {
+    const res = await apiPost('/login', { email, password });
+    localStorage.setItem('gymai_user_id', res.user_id);
+    localStorage.setItem('gymai_user_name', res.name || 'Athlete');
+    showToast('Logged in successfully', 'success');
+    initUserId();
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    btn.textContent = oldText;
+    btn.disabled = false;
+  }
+}
+
+async function handleRegister() {
+  const name = document.getElementById('auth-name-register').value;
+  const email = document.getElementById('auth-email-register').value;
+  const password = document.getElementById('auth-password-register').value;
+  if (!email || !password) return showToast('Please enter email and password', 'error');
+
+  const btn = event.target;
+  const oldText = btn.textContent;
+  btn.textContent = 'Registering...';
+  btn.disabled = true;
+
+  try {
+    const res = await apiPost('/register', { email, password, name });
+    localStorage.setItem('gymai_user_id', res.user_id);
+    localStorage.setItem('gymai_user_name', res.name || 'Athlete');
+    showToast('Registration successful!', 'success');
+    initUserId();
+  } catch (e) {
+    showToast(e.message, 'error');
+  } finally {
+    btn.textContent = oldText;
+    btn.disabled = false;
+  }
+}
+
+function handleLogout() {
+  localStorage.removeItem('gymai_user_id');
+  localStorage.removeItem('gymai_user_name');
+  initUserId();
 }
 
 // ── View Routing ───────────────────────────────────────────
@@ -142,9 +220,16 @@ function renderDashboard(data) {
   document.getElementById('stat-consistency').textContent = score.toFixed(0) + '%';
   document.getElementById('stat-completed').textContent = data.completed_days || 0;
   document.getElementById('stat-total').textContent = data.total_days || 0;
-  document.getElementById('stat-weight').textContent = data.weight_change != null
-    ? (data.weight_change > 0 ? '+' : '') + data.weight_change + ' kg'
-    : '–';
+  if (data.weight_change != null) {
+    const sign = data.weight_change > 0 ? '+' : '';
+    const color = data.weight_change < 0 ? 'var(--green)' : data.weight_change > 0 ? 'var(--red)' : 'var(--text)';
+    const el = document.getElementById('stat-weight');
+    el.textContent = sign + data.weight_change + ' kg';
+    el.style.color = color;
+  } else {
+    document.getElementById('stat-weight').textContent = '0 kg';
+    document.getElementById('stat-weight').title = 'Update your weight again to see change';
+  }
   document.getElementById('motivation-text').textContent =
     data.motivational_message || 'Keep pushing!';
 
@@ -483,10 +568,13 @@ async function sendMessage() {
     hideTyping();
     addChatMessage('assistant', res.reply);
 
-    // If a plan was generated, refresh calendar
-    if (res.structured_data?.plan || res.intent === 'get_plan') {
+    // If a plan was generated or modified, refresh calendar
+    if (res.structured_data?.plan || res.intent === 'get_plan' ||
+        res.intent === 'modify_plan' || res.structured_data?.plan_modified ||
+        res.structured_data?.refresh_calendar) {
       setTimeout(() => {
-        if (state.currentView === 'calendar') loadCalendar();
+        loadCalendar();
+        if (state.currentView === 'calendar') loadDayDetail(state.selectedDate);
       }, 500);
     }
     // If profile was updated, refresh dashboard
@@ -513,7 +601,8 @@ function renderQuickChips(intent) {
   const suggestions = {
     profile:      ['Update my weight', 'Change diet to non-veg', 'My goal is muscle gain'],
     log_activity: ['I skipped today', 'Show my plan', 'How am I doing?'],
-    get_plan:     ['Show today\'s workout', 'What should I eat?', 'I need motivation'],
+    get_plan:     ['Show today\'s workout', 'What should I eat?', 'Change my plan'],
+    modify_plan:  ['I don\'t like running', 'Replace push-ups with something easier', 'Change my meals', 'I want home workouts only'],
     nutrition:    ['What can I eat for breakfast?', 'Is pizza okay?', 'High protein lunch ideas'],
     motivation:   ['Show my plan', 'Log my workout', 'How many calories?'],
     general:      ['Generate my plan', 'What\'s my goal?', 'Log today\'s workout'],
@@ -547,12 +636,6 @@ function autoResize(el) {
 
 document.addEventListener('DOMContentLoaded', () => {
   initUserId();
-  showView('dashboard');
-
-  // Set avatar initials
-  const uid = state.userId;
-  document.querySelector('.user-avatar').textContent =
-    uid ? uid.slice(5, 7).toUpperCase() : 'U';
 
   // Nav
   document.querySelectorAll('.nav-item').forEach(item => {

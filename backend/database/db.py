@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS auth (
+    user_id       TEXT PRIMARY KEY,
+    email         TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS user_state (
     user_id              TEXT PRIMARY KEY,
     missing_fields       TEXT DEFAULT '[]',
@@ -73,6 +80,13 @@ CREATE TABLE IF NOT EXISTS chat_history (
     role       TEXT NOT NULL,
     content    TEXT NOT NULL,
     created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS weight_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT NOT NULL,
+    weight      REAL NOT NULL,
+    recorded_at TEXT NOT NULL
 );
 """
 
@@ -119,6 +133,27 @@ async def upsert_user(user_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         await db.commit()
     return existing
 
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+async def create_auth(user_id: str, email: str, password_hash: str) -> None:
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO auth (user_id, email, password_hash, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (user_id, email, password_hash, now),
+        )
+        await db.commit()
+
+async def get_auth_by_email(email: str) -> Optional[Dict[str, Any]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM auth WHERE email = ?", (email,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
 
 # ---------------------------------------------------------------------------
 # User State
@@ -368,3 +403,53 @@ async def get_chat_history(user_id: str, limit: int = 20) -> List[Dict[str, str]
         ) as cur:
             rows = await cur.fetchall()
             return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+
+
+# ---------------------------------------------------------------------------
+# Weight History
+# ---------------------------------------------------------------------------
+
+async def record_weight(user_id: str, weight: float) -> None:
+    """Insert a new weight snapshot. Called every time the user's weight is saved."""
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO weight_history (user_id, weight, recorded_at) VALUES (?,?,?)",
+            (user_id, weight, now),
+        )
+        await db.commit()
+
+
+async def get_weight_change(user_id: str) -> Optional[float]:
+    """
+    Returns current_weight - first_recorded_weight.
+    Returns None if fewer than 2 snapshots exist (no meaningful delta yet).
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT weight FROM weight_history WHERE user_id=? ORDER BY id ASC LIMIT 1",
+            (user_id,),
+        ) as cur:
+            first_row = await cur.fetchone()
+        async with db.execute(
+            "SELECT weight FROM weight_history WHERE user_id=? ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ) as cur:
+            last_row = await cur.fetchone()
+
+    if not first_row or not last_row:
+        return None
+    first_w = first_row["weight"]
+    last_w  = last_row["weight"]
+    # Only return a delta if weight was recorded at least twice
+    if first_w == last_w and first_row["weight"] == last_row["weight"]:
+        # Check row count to distinguish single entry from same-value updates
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM weight_history WHERE user_id=?", (user_id,)
+            ) as cur:
+                count = (await cur.fetchone())[0]
+        if count < 2:
+            return None
+    return round(last_w - first_w, 1)

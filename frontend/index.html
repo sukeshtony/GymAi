@@ -10,7 +10,51 @@
 </head>
 <body>
 
-<div class="app-shell">
+<div class="auth-shell" id="auth-shell" style="display: none;">
+  <div class="auth-container">
+    <div style="text-align: center; margin-bottom: 24px;">
+      <div style="font-size: 3rem; margin-bottom: 8px;">🏋️</div>
+      <h2>Welcome to GymAI</h2>
+      <p style="color: var(--text-muted); font-size: 0.9rem;">Sign in to continue to your fitness journey</p>
+    </div>
+    
+    <div id="login-form">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="auth-email-login" placeholder="you@example.com" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="auth-password-login" placeholder="••••••••" />
+      </div>
+      <button class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 12px;" onclick="handleLogin()">Sign In</button>
+      <div style="text-align: center; margin-top: 16px; font-size: 0.85rem; color: var(--text-muted);">
+        Don't have an account? <a href="#" onclick="toggleAuthMode('register')" style="color: var(--accent); text-decoration: none;">Create one</a>
+      </div>
+    </div>
+
+    <div id="register-form" style="display: none;">
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" id="auth-name-register" placeholder="Your Name" />
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="auth-email-register" placeholder="you@example.com" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="auth-password-register" placeholder="••••••••" />
+      </div>
+      <button class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 12px;" onclick="handleRegister()">Register</button>
+      <div style="text-align: center; margin-top: 16px; font-size: 0.85rem; color: var(--text-muted);">
+        Already have an account? <a href="#" onclick="toggleAuthMode('login')" style="color: var(--accent); text-decoration: none;">Sign in</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="app-shell" id="app-shell" style="display: none;">
 
   <!-- ═══════════════════════════════════════════
        SIDEBAR
@@ -35,13 +79,14 @@
     </div>
 
     <div class="sidebar-footer">
-      <div class="user-badge">
-        <div class="user-avatar">U1</div>
+      <div class="user-badge" style="margin-bottom: 12px;">
+        <div class="user-avatar" id="avatar-initials">U</div>
         <div class="user-info">
           <div class="name">Athlete</div>
           <div class="uid">Loading…</div>
         </div>
       </div>
+      <button class="btn btn-secondary btn-sm" style="width: 100%; justify-content: center;" onclick="handleLogout()">Logout</button>
     </div>
   </nav>
 
@@ -100,7 +145,7 @@
         <div class="stat-card red">
           <div class="stat-icon">⚖️</div>
           <div class="stat-value" id="stat-weight">–</div>
-          <div class="stat-label">Weight Change</div>
+          <div class="stat-label">Weight Change (since start)</div>
         </div>
       </div>
 

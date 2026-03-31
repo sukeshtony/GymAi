@@ -3,7 +3,6 @@ Base agent — shared Gemini API call loop with function-calling handling.
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Any, Dict, List, Optional
 
@@ -39,13 +38,31 @@ def _to_gemini_tools(anthropic_tools: List[Dict]) -> Optional[List[Dict]]:
     }]
 
 
-def _extract_args(fc_args) -> Dict[str, Any]:
-    """Safely convert Gemini function_call.args to a plain Python dict."""
+def _deep_convert(obj: Any) -> Any:
+    """Recursively convert protobuf MapComposite / RepeatedComposite to plain dicts/lists."""
+    if hasattr(obj, "items"):          # MapComposite or any dict-like
+        return {k: _deep_convert(v) for k, v in obj.items()}
+    if isinstance(obj, (str, bytes)):  # strings are iterable – don't recurse
+        return obj
     try:
-        # In google-generativeai >= 0.7 args is already a Struct-like mapping
-        return dict(fc_args)
+        iter(obj)                      # RepeatedComposite or any list-like
+        return [_deep_convert(item) for item in obj]
+    except TypeError:
+        return obj                     # scalar (int, float, bool, None, …)
+
+
+def _extract_args(fc_args) -> Dict[str, Any]:
+    """Deeply convert Gemini function_call.args to a plain Python dict.
+
+    dict(fc_args) is a *shallow* conversion — nested arrays/objects stay as
+    RepeatedComposite / MapComposite protobuf types which are not JSON-serialisable.
+    _deep_convert walks the full tree and replaces every protobuf container with
+    a plain list or dict.
+    """
+    try:
+        return _deep_convert(fc_args)
     except Exception:
-        return json.loads(type(fc_args).to_json(fc_args))
+        return dict(fc_args)
 
 
 class BaseAgent:

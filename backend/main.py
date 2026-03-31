@@ -24,6 +24,9 @@ from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
+import uuid
+from passlib.context import CryptContext
+
 from database import db
 from agents.coordinator import CoordinatorAgent
 from mcp_tools.tools import execute_tool
@@ -33,7 +36,10 @@ from models.schemas import (
     DayDetailResponse, DailyLogResponse,
     AdjustmentRecord, ProgressResponse,
     LogRequest,
+    RegisterRequest, LoginRequest, AuthResponse
 )
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +80,42 @@ coordinator = CoordinatorAgent()
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "1.0.0"}
+
+
+@app.post("/register", response_model=AuthResponse)
+async def register(req: RegisterRequest):
+    existing = await db.get_auth_by_email(req.email)
+    if existing:
+        raise HTTPException(400, "Email already registered")
+    
+    user_id = "user_" + uuid.uuid4().hex[:8]
+    hashed_pwd = pwd_context.hash(req.password)
+    
+    await db.create_auth(user_id, req.email, hashed_pwd)
+    # create the user profile record
+    await db.upsert_user(user_id, {"name": req.name})
+    
+    return AuthResponse(
+        user_id=user_id,
+        email=req.email,
+        name=req.name
+    )
+
+
+@app.post("/login", response_model=AuthResponse)
+async def login(req: LoginRequest):
+    auth_record = await db.get_auth_by_email(req.email)
+    if not auth_record or not pwd_context.verify(req.password, auth_record["password_hash"]):
+        raise HTTPException(401, "Invalid email or password")
+    
+    user_id = auth_record["user_id"]
+    user_profile = await db.get_user(user_id)
+    
+    return AuthResponse(
+        user_id=user_id,
+        email=req.email,
+        name=user_profile.get("name") if user_profile else None
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -238,10 +280,12 @@ async def get_progress(user_id: str = Query(...)):
         extra_context={"user_id": user_id},
     )
 
+    weight_change = await db.get_weight_change(user_id)
+
     return ProgressResponse(
         user_id=user_id,
         consistency_score=summary.get("consistency_score", 0.0),
-        weight_change=None,  # Would need initial weight tracking for delta
+        weight_change=weight_change,
         completed_days=summary.get("completed_days", 0),
         total_days=summary.get("total_logged_days", 0),
         motivational_message=coach_result.get("reply", "Keep going!"),

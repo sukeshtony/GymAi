@@ -168,3 +168,21 @@ class ProgressResponse(BaseModel):
     total_days: int
     motivational_message: str
     recent_logs: List[Dict[str, Any]] = []
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+class AuthResponse(BaseModel):
+    user_id: str
+    email: str
+    name: Optional[str] = None
