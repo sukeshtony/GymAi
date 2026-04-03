@@ -18,9 +18,11 @@ from datetime import date, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import google.genai.errors
 
 load_dotenv()
 
@@ -38,7 +40,10 @@ from models.schemas import (
     LogRequest,
     RegisterRequest, LoginRequest, AuthResponse
 )
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -72,6 +77,13 @@ if os.path.isdir(frontend_dir):
 
 coordinator = CoordinatorAgent()
 
+@app.exception_handler(google.genai.errors.APIError)
+async def genai_api_error_handler(request: Request, exc: google.genai.errors.APIError):
+    logger.error(f"GenAI API Error: {exc}")
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "The AI is currently experiencing very high demand. Please try logging your activity again in a few minutes."}
+    )
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -84,23 +96,40 @@ async def health():
 
 @app.post("/register", response_model=AuthResponse)
 async def register(req: RegisterRequest):
+    logger.info("STEP 1: Request received")
+    print("STEP 1: Request received")
+    logger.info("STEP 2: Checking existing user")
     existing = await db.get_auth_by_email(req.email)
+
+    logger.info("STEP 3: Existing check done")
+
     if existing:
+        logger.warning("STEP 3.1: Email already exists")
         raise HTTPException(400, "Email already registered")
     
+    logger.info("STEP 4: Generating user_id")
     user_id = "user_" + uuid.uuid4().hex[:8]
+
+    logger.info("STEP 5: Hashing password")
     hashed_pwd = pwd_context.hash(req.password)
-    
+
+    logger.info("STEP 6: BEFORE DB create_auth")
     await db.create_auth(user_id, req.email, hashed_pwd)
-    # create the user profile record
+
+    logger.info("STEP 7: AFTER DB create_auth")
+
+    logger.info("STEP 8: BEFORE DB upsert_user")
     await db.upsert_user(user_id, {"name": req.name})
-    
+
+    logger.info("STEP 9: AFTER DB upsert_user")
+
+    logger.info("STEP 10: Returning response")
+
     return AuthResponse(
         user_id=user_id,
         email=req.email,
         name=req.name
     )
-
 
 @app.post("/login", response_model=AuthResponse)
 async def login(req: LoginRequest):
@@ -144,6 +173,10 @@ async def chat(req: ChatRequest):
         structured_data=result.get("structured_data"),
     )
 
+@app.get("/health")
+async def health():
+    logger.info("HEALTH CHECK HIT")
+    return {"status": "ok", "version": "1.0.0"}
 
 @app.get("/calendar", response_model=CalendarResponse)
 async def get_calendar(
@@ -316,4 +349,6 @@ async def generate_plan(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+

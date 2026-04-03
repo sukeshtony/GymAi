@@ -1,24 +1,19 @@
 """
-Adjustment Agent
-================
-CRITICAL AGENT – analyses daily logs and adjusts the NEXT day's plan.
-Rules:
-  - Workout skipped → increase intensity next day (add 1 set per exercise)
-  - Overeating (>200 cal over target) → reduce next day's calories
-  - Good performance (workout done + within calories) → maintain or reward
-  - Does NOT change the workout time window – only intensity and diet targets
+Adjustment Agent (ADK)
+======================
+Analyses daily logs and adjusts the NEXT day's plan.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 from agents.base import BaseAgent
-from mcp_tools.tools import TOOL_DEFINITIONS
+from mcp_tools.tools import (
+    tool_get_daily_plan, tool_log_daily_activity,
+    tool_apply_adjustment, tool_get_weekly_plan,
+    tool_get_progress_summary,
+)
 
-_ADJ_TOOLS = [t for t in TOOL_DEFINITIONS if t["name"] in (
-    "get_daily_plan", "log_daily_activity", "apply_adjustment",
-    "get_weekly_plan", "get_progress_summary",
-)]
 
 SYSTEM_PROMPT = """You are a smart fitness adjustment coach.
 
@@ -42,7 +37,7 @@ RULES (strictly follow these):
    → intensity_delta = "increase"
    → reason = "Excellent streak! Increasing intensity as a reward"
 
-Always call apply_adjustment at the end with the computed values.
+Always call tool_apply_adjustment at the end with the computed values.
 Then give a short, motivating message to the user explaining what changed.
 """
 
@@ -50,7 +45,11 @@ Then give a short, motivating message to the user explaining what changed.
 class AdjustmentAgent(BaseAgent):
     name = "AdjustmentAgent"
     system_prompt = SYSTEM_PROMPT
-    tools = _ADJ_TOOLS
+    tool_functions = [
+        tool_get_daily_plan, tool_log_daily_activity,
+        tool_apply_adjustment, tool_get_weekly_plan,
+        tool_get_progress_summary,
+    ]
 
     async def run(
         self,

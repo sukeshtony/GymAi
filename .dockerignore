@@ -1,0 +1,10 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+backend/venv
+backend/.env
+backend/gym_ai.db
+backend/__pycache__
+*.md
+.gemini

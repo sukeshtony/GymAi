@@ -412,3 +412,190 @@ def _this_monday() -> str:
     today = date.today()
     monday = today - timedelta(days=today.weekday())
     return monday.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# ADK Tool Functions
+# ---------------------------------------------------------------------------
+# These standalone async functions are auto-wrapped by ADK's LlmAgent
+# as FunctionTool objects.  ADK reads the name, docstring, and type hints
+# to build the JSON schema the LLM sees.
+#
+# Each function delegates to execute_tool() to avoid duplicating logic.
+# ---------------------------------------------------------------------------
+
+async def tool_save_user_profile(
+    user_id: str,
+    name: str = "",
+    goal: str = "",
+    weight: float = 0,
+    height: float = 0,
+    workout_start: str = "",
+    workout_end: str = "",
+    location: str = "",
+    diet_type: str = "",
+    food_access: str = "",
+) -> dict:
+    """Save or update fields in the user's fitness profile.
+
+    Only pass fields that need to be set or updated.
+    goal must be one of: weight_loss, muscle_gain, maintenance.
+    diet_type must be one of: veg, non_veg, vegan.
+    food_access must be one of: home, hostel, outside.
+    workout_start and workout_end in HH:MM format (e.g. 07:00).
+    weight in kg, height in cm.
+
+    Returns the updated profile and list of missing fields.
+    """
+    args: Dict[str, Any] = {"user_id": user_id}
+    if name:          args["name"] = name
+    if goal:          args["goal"] = goal
+    if weight:        args["weight"] = weight
+    if height:        args["height"] = height
+    if workout_start: args["workout_start"] = workout_start
+    if workout_end:   args["workout_end"] = workout_end
+    if location:      args["location"] = location
+    if diet_type:     args["diet_type"] = diet_type
+    if food_access:   args["food_access"] = food_access
+    return await execute_tool("save_user_profile", args)
+
+
+async def tool_get_user_profile(user_id: str) -> dict:
+    """Retrieve the current user profile and list of missing fields.
+
+    Returns the profile data, missing_fields list, and onboarding_complete status.
+    """
+    return await execute_tool("get_user_profile", {"user_id": user_id})
+
+
+async def tool_get_weekly_plan(user_id: str, week_start: str = "") -> dict:
+    """Retrieve the current or most recent weekly fitness plan for the user.
+
+    Optionally filter by week_start (ISO date of Monday, YYYY-MM-DD).
+    Returns the full plan with days array, or error if no plan exists.
+    """
+    args: Dict[str, Any] = {"user_id": user_id}
+    if week_start:
+        args["week_start"] = week_start
+    return await execute_tool("get_weekly_plan", args)
+
+
+async def tool_get_daily_plan(user_id: str, date: str) -> dict:
+    """Get the workout and diet plan for a specific date.
+
+    date must be in ISO format YYYY-MM-DD.
+    Returns the day's exercises, meals, calories, and status.
+    """
+    return await execute_tool("get_daily_plan", {"user_id": user_id, "date": date})
+
+
+async def tool_log_daily_activity(
+    user_id: str,
+    date: str,
+    workout_done: bool,
+    food_items: str = "",
+    calories_consumed: int = 0,
+    notes: str = "",
+) -> dict:
+    """Record the user's workout completion and food intake for a given day.
+
+    Call this when the user tells you what they ate or whether they worked out.
+    date in ISO format YYYY-MM-DD.
+    food_items is a comma-separated string of food items eaten.
+    """
+    food_list = [f.strip() for f in food_items.split(",") if f.strip()] if food_items else []
+    return await execute_tool("log_daily_activity", {
+        "user_id": user_id,
+        "date": date,
+        "workout_done": workout_done,
+        "food_items": food_list,
+        "calories_consumed": calories_consumed,
+        "notes": notes,
+    })
+
+
+async def tool_apply_adjustment(
+    user_id: str,
+    target_date: str,
+    reason: str,
+    intensity_delta: str = "maintain",
+    calorie_delta: int = 0,
+    extra_notes: str = "",
+) -> dict:
+    """Store an AI-generated adjustment for the next day's plan.
+
+    Use after analysing a daily log to modify tomorrow's workout intensity or diet.
+    target_date: the date the adjustment applies to (YYYY-MM-DD).
+    intensity_delta: one of increase, decrease, maintain.
+    calorie_delta: calories to add (positive) or subtract (negative) from target.
+    """
+    return await execute_tool("apply_adjustment", {
+        "user_id": user_id,
+        "target_date": target_date,
+        "reason": reason,
+        "intensity_delta": intensity_delta,
+        "calorie_delta": calorie_delta,
+        "extra_notes": extra_notes,
+    })
+
+
+async def tool_get_progress_summary(user_id: str) -> dict:
+    """Return consistency score, weight change, and completed days for the user.
+
+    Used to assess the user's overall progress and adherence.
+    """
+    return await execute_tool("get_progress_summary", {"user_id": user_id})
+
+
+async def tool_update_day_status(
+    user_id: str,
+    date: str,
+    status: str,
+    adjustment_note: str = "",
+) -> dict:
+    """Update the status of a specific day in the weekly plan.
+
+    status must be one of: pending, completed, missed, adjusted.
+    date in ISO format YYYY-MM-DD.
+    """
+    args: Dict[str, Any] = {
+        "user_id": user_id,
+        "date": date,
+        "status": status,
+    }
+    if adjustment_note:
+        args["adjustment_note"] = adjustment_note
+    return await execute_tool("update_day_status", args)
+
+
+async def tool_modify_plan_days(
+    user_id: str,
+    reason: str,
+    changes_json: str,
+) -> dict:
+    """Update one or more days in the weekly plan with new exercises, meals, or both.
+
+    Use when the user wants to change workouts or diet preferences.
+
+    changes_json must be a JSON string representing a list of day changes.
+    Each change object must have a "date" field (YYYY-MM-DD) and optionally:
+      - "exercises": list of exercise objects with name, sets, reps, duration_min, notes
+      - "meals": list of meal objects with meal_type (breakfast/lunch/snack/dinner), items, calories, protein_g
+      - "workout_type": string like Push, Yoga, Cardio, Rest
+      - "total_calories": integer
+      - "adjustment_note": string
+
+    Example changes_json:
+    [{"date":"2025-01-06","workout_type":"Yoga","exercises":[{"name":"Sun Salutation","sets":3,"reps":"5"}]}]
+    """
+    import json as _json
+    try:
+        changes = _json.loads(changes_json)
+    except (ValueError, TypeError):
+        return {"error": "Invalid JSON in changes_json"}
+    return await execute_tool("modify_plan_days", {
+        "user_id": user_id,
+        "reason": reason,
+        "changes": changes,
+    })
+

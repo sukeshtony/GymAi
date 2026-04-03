@@ -1,25 +1,23 @@
 """
-Planner Agent
-=============
-Generates a structured 7-day workout + diet plan that fits inside
-the user's fixed time window. Returns structured JSON for the UI.
+Planner Agent (ADK)
+===================
+Generates a structured 7-day workout + diet plan using ADK LlmAgent.
 """
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
-import google.generativeai as genai
+from google.adk.agents import LlmAgent
+from google.adk.runners import InMemoryRunner
+from google.genai.types import Content, Part
 
 from agents.base import BaseAgent, MODEL
 from database import db
-from mcp_tools.tools import TOOL_DEFINITIONS, execute_tool
+from mcp_tools.tools import tool_get_user_profile, tool_get_weekly_plan
 
-
-_PLANNER_TOOLS = [t for t in TOOL_DEFINITIONS if t["name"] in (
-    "get_user_profile", "get_weekly_plan"
-)]
 
 SYSTEM_PROMPT = """You are an expert fitness and nutrition planner.
 
@@ -72,8 +70,7 @@ OUTPUT FORMAT – return ONLY this JSON (no extra text):
 class PlannerAgent(BaseAgent):
     name = "PlannerAgent"
     system_prompt = SYSTEM_PROMPT
-    tools = _PLANNER_TOOLS
-    max_iterations = 3  # Plan generation needs fewer loops
+    tool_functions = [tool_get_user_profile, tool_get_weekly_plan]
 
     async def generate_plan(
         self,
@@ -83,7 +80,7 @@ class PlannerAgent(BaseAgent):
         """
         Full plan generation flow:
         1. Load user profile from DB
-        2. Ask Claude to generate the plan JSON
+        2. Ask LLM to generate the plan JSON
         3. Parse + save to DB
         4. Return the plan
         """
@@ -96,7 +93,7 @@ class PlannerAgent(BaseAgent):
         if not profile:
             return {"error": "User profile not found. Please complete onboarding first."}
 
-        # Build a prompt with all profile details
+        # Build prompt with all profile details
         prompt = f"""
 Generate a 7-day fitness and diet plan for this user:
 
@@ -113,12 +110,29 @@ Week start (Monday): {week_start}
 The days array must have exactly 7 entries, starting from {week_start}.
 """
 
-        model = genai.GenerativeModel(
-            model_name=MODEL,
-            system_instruction=self.system_prompt,
+        # Use a dedicated ADK LlmAgent for plan generation (no tools needed here)
+        agent = LlmAgent(
+            name="PlanGenerator",
+            model=MODEL,
+            instruction=self.system_prompt,
         )
-        response = model.generate_content(prompt)
-        raw_text = response.text.strip()
+
+        runner = InMemoryRunner(agent=agent, app_name="PlanGenerator")
+        runner.auto_create_session = True
+        user_content = Content(parts=[Part.from_text(text=prompt)])
+
+        reply_parts: List[str] = []
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=f"plan_{user_id}",
+            new_message=user_content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        reply_parts.append(part.text)
+
+        raw_text = "".join(reply_parts).strip()
 
         # Extract JSON from response (handle markdown code blocks)
         if "```json" in raw_text:

@@ -1,10 +1,10 @@
 """
-Primary Coordinator Agent
-=========================
+Primary Coordinator Agent (ADK)
+===============================
 Entry point for all /chat requests.
 
 Workflow:
-  1. Detect intent from user message using Claude
+  1. Detect intent from user message using ADK LlmAgent
   2. Route to the correct sub-agent
   3. If profile is incomplete → always go to ProfileAgent first
   4. After logging → trigger AdjustmentAgent automatically
@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from typing import Any, Dict, List, Optional
 
-import google.generativeai as genai
+from google.adk.agents import LlmAgent
+from google.adk.runners import InMemoryRunner
+from google.genai.types import Content, Part
 
 from agents.profile_agent import ProfileAgent
 from agents.planner_agent import PlannerAgent
@@ -26,8 +29,7 @@ from agents.coach_agent import CoachAgent
 from agents.modification_agent import ModificationAgent
 from database import db
 
-MODEL = os.getenv("MODEL_ID", "gemini-2.5-pro")
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+MODEL = os.getenv("MODEL_ID", "gemini-2.5-flash")
 
 # Intent detection prompt – lightweight, fast
 INTENT_SYSTEM = """You are an intent classifier for a fitness app chatbot.
@@ -169,17 +171,35 @@ class CoordinatorAgent:
     async def _detect_intent(
         self, message: str, history: List[Dict[str, str]]
     ) -> str:
-        model = genai.GenerativeModel(
-            model_name=MODEL,
-            system_instruction=INTENT_SYSTEM,
+        """Use a lightweight ADK LlmAgent for intent classification."""
+        agent = LlmAgent(
+            name="IntentClassifier",
+            model=MODEL,
+            instruction=INTENT_SYSTEM,
         )
+        runner = InMemoryRunner(agent=agent, app_name="IntentClassifier")
+        runner.auto_create_session = True
+
         # Pass the last few messages as context plus the new message
         recent = history[-4:] if len(history) > 4 else history
         ctx = "\n".join(f"{m['role']}: {m['content']}" for m in recent)
         prompt = f"{ctx}\nuser: {message}" if ctx else message
-        response = model.generate_content(prompt)
+
+        user_content = Content(parts=[Part.from_text(text=prompt)])
+        reply_parts: List[str] = []
+
+        async for event in runner.run_async(
+            user_id="system",
+            session_id=f"intent_{uuid.uuid4().hex[:8]}",
+            new_message=user_content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        reply_parts.append(part.text)
+
         try:
-            raw = response.text.strip()
+            raw = "".join(reply_parts).strip()
             # Strip markdown code fences if present
             if "```" in raw:
                 raw = raw.split("```")[1].split("```")[0].strip()
@@ -193,25 +213,45 @@ class CoordinatorAgent:
     async def _general_reply(
         self, message: str, history: List[Dict], user_id: str
     ) -> Dict[str, Any]:
+        """Use an ADK LlmAgent for general conversation."""
         profile = await db.get_user(user_id)
         name = (profile or {}).get("name", "there")
-        model = genai.GenerativeModel(
-            model_name=MODEL,
-            system_instruction=(
+
+        agent = LlmAgent(
+            name="GeneralChat",
+            model=MODEL,
+            instruction=(
                 f"You are FitBot, a helpful fitness assistant. "
                 f"The user's name is {name}. "
                 "Be concise, friendly, and always steer conversation toward fitness goals."
             ),
         )
-        # Build history for context
-        gemini_history = [
-            {"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]}
-            for m in history[-6:]
-        ]
-        chat = model.start_chat(history=gemini_history)
-        response = chat.send_message(message)
+        runner = InMemoryRunner(agent=agent, app_name="GeneralChat")
+        runner.auto_create_session = True
+
+        # Include recent history in the message
+        recent = history[-6:]
+        ctx = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in recent
+        )
+        prompt = f"Previous conversation:\n{ctx}\n\nUser: {message}" if ctx else message
+
+        user_content = Content(parts=[Part.from_text(text=prompt)])
+        reply_parts: List[str] = []
+
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=f"general_{uuid.uuid4().hex[:8]}",
+            new_message=user_content,
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if part.text:
+                        reply_parts.append(part.text)
+
         return {
-            "reply": response.text,
+            "reply": "".join(reply_parts).strip() or "Hey! How can I help with your fitness today?",
             "structured_data": {},
             "tool_results": [],
         }

@@ -1,0 +1,7 @@
+self: self
+user_id: user_id: 'str'
+session_id: session_id: 'str'
+invocation_id: invocation_id: 'Optional[str]' = None
+new_message: new_message: 'Optional[types.Content]' = None
+state_delta: state_delta: 'Optional[dict[str, Any]]' = None
+run_config: run_config: 'Optional[RunConfig]' = None

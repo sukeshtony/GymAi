@@ -1,19 +1,17 @@
 """
-Coach / Motivation Agent
-========================
-Provides encouragement, handles missed days with positive reinforcement,
-celebrates streaks, and gives progress-based motivational messages.
+Coach / Motivation Agent (ADK)
+==============================
+Provides encouragement, handles missed days with positive reinforcement.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 from agents.base import BaseAgent
-from mcp_tools.tools import TOOL_DEFINITIONS
+from mcp_tools.tools import (
+    tool_get_user_profile, tool_get_progress_summary, tool_get_weekly_plan,
+)
 
-_COACH_TOOLS = [t for t in TOOL_DEFINITIONS if t["name"] in (
-    "get_user_profile", "get_progress_summary", "get_weekly_plan",
-)]
 
 SYSTEM_PROMPT = """You are an enthusiastic, empathetic personal fitness coach named Coach Raj.
 
@@ -24,8 +22,8 @@ Your personality:
 - Handles setbacks with compassion and actionable advice
 
 When the user talks to you:
-1. Call get_progress_summary to get their current consistency score.
-2. Call get_user_profile to personalise your message.
+1. Call tool_get_progress_summary to get their current consistency score.
+2. Call tool_get_user_profile to personalise your message.
 3. Based on the data:
    - Score > 80%: "Amazing streak! You're crushing it!"
    - Score 50-80%: "Good progress! Here's how to push further..."
@@ -43,7 +41,7 @@ Let's make tomorrow count – your plan is ready and waiting."
 class CoachAgent(BaseAgent):
     name = "CoachAgent"
     system_prompt = SYSTEM_PROMPT
-    tools = _COACH_TOOLS
+    tool_functions = [tool_get_user_profile, tool_get_progress_summary, tool_get_weekly_plan]
 
     async def run(
         self,

@@ -1,24 +1,20 @@
 """
-Nutrition Agent
-===============
+Nutrition Agent (ADK)
+=====================
 Suggests realistic meals based on user location, diet type, and food access.
-Returns structured meal data for the UI.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 from agents.base import BaseAgent
-from mcp_tools.tools import TOOL_DEFINITIONS
+from mcp_tools.tools import tool_get_user_profile, tool_get_daily_plan
 
-_NUTRITION_TOOLS = [t for t in TOOL_DEFINITIONS if t["name"] in (
-    "get_user_profile", "get_daily_plan",
-)]
 
 SYSTEM_PROMPT = """You are an expert nutritionist specializing in Indian and regional diets.
 
 When asked for meal suggestions:
-1. First call get_user_profile to understand the user's diet type, food access, and location.
+1. First call tool_get_user_profile to understand the user's diet type, food access, and location.
 2. Suggest meals that are:
    - Realistic for the user's food_access level (home-cooked vs hostel vs outside food)
    - Available in their city/region
@@ -43,7 +39,7 @@ When asked for meal suggestions:
 class NutritionAgent(BaseAgent):
     name = "NutritionAgent"
     system_prompt = SYSTEM_PROMPT
-    tools = _NUTRITION_TOOLS
+    tool_functions = [tool_get_user_profile, tool_get_daily_plan]
 
     async def run(
         self,

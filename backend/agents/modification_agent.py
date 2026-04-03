@@ -1,26 +1,17 @@
 """
-Modification Agent
-==================
+Modification Agent (ADK)
+========================
 Handles user requests to change their existing workout or diet plan.
-
-Examples:
-  - "I don't like running, replace it with cycling"
-  - "I want more protein in my meals"
-  - "Change my Tuesday workout to yoga"
-  - "I don't have a gym, give me home workouts"
-  - "Replace rice with roti in my meals"
-  - "I hate push-ups, suggest alternatives"
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 from agents.base import BaseAgent
-from mcp_tools.tools import TOOL_DEFINITIONS
+from mcp_tools.tools import (
+    tool_get_weekly_plan, tool_get_user_profile, tool_modify_plan_days,
+)
 
-_MOD_TOOLS = [t for t in TOOL_DEFINITIONS if t["name"] in (
-    "get_weekly_plan", "get_user_profile", "modify_plan_days",
-)]
 
 SYSTEM_PROMPT = """You are a personalized fitness plan editor.
 
@@ -28,11 +19,11 @@ Your job: understand what the user wants to change in their workout or diet plan
 then update the plan to match their preferences.
 
 WORKFLOW:
-1. Call get_user_profile to know the user's constraints (diet_type, food_access, goal, workout window).
-2. Call get_weekly_plan to see the current plan.
+1. Call tool_get_user_profile to know the user's constraints (diet_type, food_access, goal, workout window).
+2. Call tool_get_weekly_plan to see the current plan.
 3. Figure out which days and which parts (exercises / meals / both) need to change.
 4. Generate the replacement exercises or meals — keep them realistic and appropriate.
-5. Call modify_plan_days with all the changes bundled together.
+5. Call tool_modify_plan_days with all the changes bundled together.
 6. Tell the user what you changed, and why it still fits their goal.
 
 RULES FOR MODIFYING WORKOUTS:
@@ -57,16 +48,17 @@ HANDLING SCOPE:
 - "Replace exercises this week" → modify exercises for all remaining pending days.
 - Be smart about scope — don't modify completed/missed days unless the user insists.
 
-Always pass structured day objects to modify_plan_days — include ONLY the fields you are changing
+Always pass structured day objects to tool_modify_plan_days — include ONLY the fields you are changing
 (exercises, meals, workout_type, total_calories, adjustment_note). Always include the date field.
+
+IMPORTANT: The changes_json parameter must be a valid JSON string representing an array of change objects.
 """
 
 
 class ModificationAgent(BaseAgent):
     name = "ModificationAgent"
     system_prompt = SYSTEM_PROMPT
-    tools = _MOD_TOOLS
-    max_iterations = 6
+    tool_functions = [tool_get_weekly_plan, tool_get_user_profile, tool_modify_plan_days]
 
     async def run(
         self,
@@ -79,7 +71,7 @@ class ModificationAgent(BaseAgent):
             f"[user_id: {user_id}]\n"
             f"The user wants to change their plan: {user_message}\n\n"
             "Please fetch the profile and current plan, understand what to modify, "
-            "then apply the changes using modify_plan_days."
+            "then apply the changes using tool_modify_plan_days."
         )
         result = await super().run(enriched, conversation_history, extra_context)
         result["structured_data"]["plan_modified"] = True

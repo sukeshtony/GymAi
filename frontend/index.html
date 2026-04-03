@@ -313,6 +313,7 @@
 <!-- ═══════════════════════════════════════════
      FULL PAGE CHAT LOGIC (view-chat tab)
 ════════════════════════════════════════════ -->
+<script src="app.js?v=2"></script>
 <script>
   // Page-level chat (the Chat tab) uses same state.userId
   const pageChatHistory = [];
@@ -354,7 +355,7 @@
     document.getElementById('chat-send-page').disabled = true;
 
     try {
-      const res = await fetch('http://localhost:8000/chat', {
+      const res = await fetch(API + '/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: state.userId, message: text }),
@@ -373,6 +374,5 @@
   }
 </script>
 
-<script src="app.js"></script>
 </body>
 </html>

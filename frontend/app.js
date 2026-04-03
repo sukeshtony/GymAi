@@ -2,7 +2,11 @@
    GymAI – Frontend Application
    ========================================================= */
 
-const API = 'http://localhost:8000';
+// If opened via file:// or running locally, point to localhost:8000. 
+// If deployed to Cloud Run, use relative paths.
+const API = (window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:8000'
+  : '';
 
 // ── State ──────────────────────────────────────────────────
 let state = {

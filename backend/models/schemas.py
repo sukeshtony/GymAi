@@ -91,7 +91,7 @@ class DailyLog(BaseModel):
 
 
 class DailyLogResponse(DailyLog):
-    id: int
+    id: str
 
 
 # ---------------------------------------------------------------------------

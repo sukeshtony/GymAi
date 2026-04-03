@@ -1,100 +1,49 @@
 """
-SQLite async database layer.
-All collections mirror the Firestore schema described in the spec,
-so swapping to Firestore later only requires changing this file.
+Google Cloud Firestore async database layer.
+============================================
+Drop-in replacement for the original SQLite (aiosqlite) module.
+All function signatures and return shapes are identical so that
+callers (tools.py, coordinator.py, main.py, etc.) need zero changes.
+
+Collections
+-----------
+  users          – user profiles          (doc id = user_id)
+  auth           – email/password records (doc id = user_id)
+  user_state     – onboarding state       (doc id = user_id)
+  weekly_plans   – 7-day plans            (auto id, queried by user_id)
+  daily_logs     – per-day activity logs   (doc id = {user_id}_{log_date})
+  adjustments    – AI-generated tweaks     (auto id)
+  chat_history   – conversation turns      (auto id)
+  weight_history – weight snapshots        (auto id)
 """
-import json
+from __future__ import annotations
+
 import os
-import aiosqlite
-from datetime import datetime, date
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-DB_PATH = os.getenv("DATABASE_PATH", "gym_ai.db")
+from google.cloud import firestore
+from google.cloud.firestore_v1 import FieldFilter
 
 # ---------------------------------------------------------------------------
-# Schema bootstrap
+# Client initialisation
 # ---------------------------------------------------------------------------
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id           TEXT PRIMARY KEY,
-    name         TEXT,
-    goal         TEXT,
-    weight       REAL,
-    height       REAL,
-    workout_start TEXT,
-    workout_end   TEXT,
-    location     TEXT,
-    diet_type    TEXT,
-    food_access  TEXT,
-    created_at   TEXT,
-    updated_at   TEXT
-);
+_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
+_db: firestore.AsyncClient | None = None
 
-CREATE TABLE IF NOT EXISTS auth (
-    user_id       TEXT PRIMARY KEY,
-    email         TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at    TEXT
-);
 
-CREATE TABLE IF NOT EXISTS user_state (
-    user_id              TEXT PRIMARY KEY,
-    missing_fields       TEXT DEFAULT '[]',
-    onboarding_complete  INTEGER DEFAULT 0,
-    current_step         TEXT DEFAULT 'start',
-    updated_at           TEXT
-);
-
-CREATE TABLE IF NOT EXISTS weekly_plans (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     TEXT NOT NULL,
-    week_start  TEXT NOT NULL,
-    plan_data   TEXT NOT NULL,
-    created_at  TEXT
-);
-
-CREATE TABLE IF NOT EXISTS daily_logs (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id           TEXT NOT NULL,
-    log_date          TEXT NOT NULL,
-    workout_done      INTEGER DEFAULT 0,
-    food_intake       TEXT DEFAULT '[]',
-    calories_consumed INTEGER DEFAULT 0,
-    notes             TEXT,
-    created_at        TEXT
-);
-
-CREATE TABLE IF NOT EXISTS adjustments (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id          TEXT NOT NULL,
-    adjustment_date  TEXT NOT NULL,
-    reason           TEXT,
-    changes          TEXT DEFAULT '{}',
-    created_at       TEXT
-);
-
-CREATE TABLE IF NOT EXISTS chat_history (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id    TEXT NOT NULL,
-    role       TEXT NOT NULL,
-    content    TEXT NOT NULL,
-    created_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS weight_history (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     TEXT NOT NULL,
-    weight      REAL NOT NULL,
-    recorded_at TEXT NOT NULL
-);
-"""
+def _get_db() -> firestore.AsyncClient:
+    """Lazily initialise and return the Firestore AsyncClient."""
+    global _db
+    if _db is None:
+        _db = firestore.AsyncClient(project=_PROJECT)
+    return _db
 
 
 async def init_db() -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.executescript(SCHEMA)
-        await db.commit()
+    """No-op — Firestore is schemaless. Kept for API compat with main.py."""
+    _get_db()  # eagerly create the client so auth errors surface early
 
 
 # ---------------------------------------------------------------------------
@@ -102,35 +51,36 @@ async def init_db() -> None:
 # ---------------------------------------------------------------------------
 
 async def get_user(user_id: str) -> Optional[Dict[str, Any]]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+    db = _get_db()
+    doc = await db.collection("users").document(user_id).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    data["id"] = doc.id
+    return data
 
 
 async def upsert_user(user_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    db = _get_db()
     now = datetime.utcnow().isoformat()
-    existing = await get_user(user_id)
-    if existing is None:
+    doc_ref = db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+
+    if doc.exists:
+        existing = doc.to_dict()
+    else:
         existing = {
             "id": user_id, "name": None, "goal": None, "weight": None,
             "height": None, "workout_start": None, "workout_end": None,
             "location": None, "diet_type": None, "food_access": None,
             "created_at": now, "updated_at": now,
         }
+
     existing.update(fields)
     existing["updated_at"] = now
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """INSERT OR REPLACE INTO users
-               (id, name, goal, weight, height, workout_start, workout_end,
-                location, diet_type, food_access, created_at, updated_at)
-               VALUES (:id,:name,:goal,:weight,:height,:workout_start,:workout_end,
-                       :location,:diet_type,:food_access,:created_at,:updated_at)""",
-            existing,
-        )
-        await db.commit()
+    existing["id"] = user_id
+
+    await doc_ref.set(existing)
     return existing
 
 
@@ -139,46 +89,56 @@ async def upsert_user(user_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 async def create_auth(user_id: str, email: str, password_hash: str) -> None:
+    db = _get_db()
     now = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """INSERT INTO auth (user_id, email, password_hash, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (user_id, email, password_hash, now),
-        )
-        await db.commit()
+    await db.collection("auth").document(user_id).set({
+        "user_id": user_id,
+        "email": email,
+        "password_hash": password_hash,
+        "created_at": now,
+    })
+
 
 async def get_auth_by_email(email: str) -> Optional[Dict[str, Any]]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM auth WHERE email = ?", (email,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+    db = _get_db()
+    query = (
+        db.collection("auth")
+        .where(filter=FieldFilter("email", "==", email))
+        .limit(1)
+    )
+    result = None
+    async for doc in query.stream():
+        result = doc.to_dict()
+        break
+    return result
+
 
 # ---------------------------------------------------------------------------
 # User State
 # ---------------------------------------------------------------------------
 
-REQUIRED_FIELDS = ["goal", "weight", "workout_start", "workout_end",
-                   "location", "diet_type", "food_access"]
+REQUIRED_FIELDS = [
+    "goal", "weight", "workout_start", "workout_end",
+    "location", "diet_type", "food_access",
+]
 
 
 async def get_user_state(user_id: str) -> Dict[str, Any]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM user_state WHERE user_id = ?", (user_id,)
-        ) as cur:
-            row = await cur.fetchone()
-            if row:
-                d = dict(row)
-                d["missing_fields"] = json.loads(d["missing_fields"])
-                return d
+    db = _get_db()
+    doc = await db.collection("user_state").document(user_id).get()
+    if doc.exists:
+        data = doc.to_dict()
+        # missing_fields is stored as a list natively in Firestore
+        if isinstance(data.get("missing_fields"), str):
+            import json
+            data["missing_fields"] = json.loads(data["missing_fields"])
+        return data
     # auto-create
     return await _create_user_state(user_id)
 
 
 async def _create_user_state(user_id: str) -> Dict[str, Any]:
+    db = _get_db()
     now = datetime.utcnow().isoformat()
     state = {
         "user_id": user_id,
@@ -187,14 +147,7 @@ async def _create_user_state(user_id: str) -> Dict[str, Any]:
         "current_step": "start",
         "updated_at": now,
     }
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """INSERT OR IGNORE INTO user_state
-               (user_id, missing_fields, onboarding_complete, current_step, updated_at)
-               VALUES (?,?,?,?,?)""",
-            (user_id, json.dumps(REQUIRED_FIELDS), 0, "start", now),
-        )
-        await db.commit()
+    await db.collection("user_state").document(user_id).set(state)
     return state
 
 
@@ -202,14 +155,9 @@ async def update_user_state(user_id: str, fields: Dict[str, Any]) -> Dict[str, A
     state = await get_user_state(user_id)
     state.update(fields)
     state["updated_at"] = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """INSERT OR REPLACE INTO user_state
-               (user_id, missing_fields, onboarding_complete, current_step, updated_at)
-               VALUES (:user_id,:missing_fields,:onboarding_complete,:current_step,:updated_at)""",
-            {**state, "missing_fields": json.dumps(state["missing_fields"])},
-        )
-        await db.commit()
+
+    db = _get_db()
+    await db.collection("user_state").document(user_id).set(state)
     return state
 
 
@@ -227,57 +175,65 @@ async def recalculate_missing_fields(user_id: str) -> List[str]:
 # Weekly Plans
 # ---------------------------------------------------------------------------
 
-async def save_weekly_plan(user_id: str, week_start: str, plan_data: Dict) -> int:
+async def save_weekly_plan(user_id: str, week_start: str, plan_data: Dict) -> str:
+    """Save a new weekly plan. Returns the Firestore document ID (str)."""
+    db = _get_db()
     now = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            """INSERT INTO weekly_plans (user_id, week_start, plan_data, created_at)
-               VALUES (?,?,?,?)""",
-            (user_id, week_start, json.dumps(plan_data), now),
+    _ts, doc_ref = await db.collection("weekly_plans").add({
+        "user_id": user_id,
+        "week_start": week_start,
+        "plan_data": plan_data,
+        "created_at": now,
+    })
+    return doc_ref.id
+
+
+async def get_weekly_plan(
+    user_id: str, week_start: Optional[str] = None
+) -> Optional[Dict]:
+    db = _get_db()
+    query = db.collection("weekly_plans").where(
+        filter=FieldFilter("user_id", "==", user_id)
+    )
+    if week_start:
+        query = query.where(
+            filter=FieldFilter("week_start", "==", week_start)
         )
-        await db.commit()
-        return cur.lastrowid
+    query = query.order_by("created_at", direction=firestore.Query.DESCENDING).limit(1)
+
+    async for doc in query.stream():
+        data = doc.to_dict()
+        data["_doc_id"] = doc.id
+        # plan_data is stored as a native dict/list in Firestore — no JSON parse needed
+        return data
+
+    return None
 
 
-async def get_weekly_plan(user_id: str, week_start: Optional[str] = None) -> Optional[Dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        if week_start:
-            async with db.execute(
-                "SELECT * FROM weekly_plans WHERE user_id=? AND week_start=? ORDER BY id DESC LIMIT 1",
-                (user_id, week_start),
-            ) as cur:
-                row = await cur.fetchone()
-        else:
-            async with db.execute(
-                "SELECT * FROM weekly_plans WHERE user_id=? ORDER BY id DESC LIMIT 1",
-                (user_id,),
-            ) as cur:
-                row = await cur.fetchone()
-        if not row:
-            return None
-        d = dict(row)
-        d["plan_data"] = json.loads(d["plan_data"])
-        return d
-
-
-async def update_day_plan(user_id: str, week_start: str, day_index: int, day_data: Dict) -> bool:
+async def update_day_plan(
+    user_id: str, week_start: str, day_index: int, day_data: Dict
+) -> bool:
     plan = await get_weekly_plan(user_id, week_start)
     if not plan:
         return False
+
     plan["plan_data"]["days"][day_index] = day_data
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE weekly_plans SET plan_data=? WHERE user_id=? AND week_start=?",
-            (json.dumps(plan["plan_data"]), user_id, week_start),
-        )
-        await db.commit()
+
+    db = _get_db()
+    await db.collection("weekly_plans").document(plan["_doc_id"]).update({
+        "plan_data": plan["plan_data"],
+    })
     return True
 
 
 # ---------------------------------------------------------------------------
 # Daily Logs
 # ---------------------------------------------------------------------------
+
+def _log_doc_id(user_id: str, log_date: str) -> str:
+    """Deterministic doc ID for upsert."""
+    return f"{user_id}_{log_date}"
+
 
 async def log_daily_activity(
     user_id: str,
@@ -286,63 +242,60 @@ async def log_daily_activity(
     food_intake: List[str],
     calories_consumed: int,
     notes: str = "",
-) -> int:
+) -> str:
+    """Upsert a daily log. Returns the document ID (str)."""
+    db = _get_db()
     now = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        # upsert by date
-        async with db.execute(
-            "SELECT id FROM daily_logs WHERE user_id=? AND log_date=?", (user_id, log_date)
-        ) as cur:
-            existing = await cur.fetchone()
-        if existing:
-            await db.execute(
-                """UPDATE daily_logs SET workout_done=?,food_intake=?,
-                   calories_consumed=?,notes=? WHERE user_id=? AND log_date=?""",
-                (int(workout_done), json.dumps(food_intake), calories_consumed,
-                 notes, user_id, log_date),
-            )
-            row_id = existing[0]
-        else:
-            cur = await db.execute(
-                """INSERT INTO daily_logs
-                   (user_id,log_date,workout_done,food_intake,calories_consumed,notes,created_at)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (user_id, log_date, int(workout_done), json.dumps(food_intake),
-                 calories_consumed, notes, now),
-            )
-            row_id = cur.lastrowid
-        await db.commit()
-        return row_id
+    doc_id = _log_doc_id(user_id, log_date)
+    doc_ref = db.collection("daily_logs").document(doc_id)
+
+    doc = await doc_ref.get()
+    if doc.exists:
+        # update
+        await doc_ref.update({
+            "workout_done": int(workout_done),
+            "food_intake": food_intake,
+            "calories_consumed": calories_consumed,
+            "notes": notes,
+        })
+    else:
+        await doc_ref.set({
+            "user_id": user_id,
+            "log_date": log_date,
+            "workout_done": int(workout_done),
+            "food_intake": food_intake,
+            "calories_consumed": calories_consumed,
+            "notes": notes,
+            "created_at": now,
+        })
+    return doc_id
 
 
 async def get_daily_log(user_id: str, log_date: str) -> Optional[Dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM daily_logs WHERE user_id=? AND log_date=?", (user_id, log_date)
-        ) as cur:
-            row = await cur.fetchone()
-            if not row:
-                return None
-            d = dict(row)
-            d["food_intake"] = json.loads(d["food_intake"])
-            return d
+    db = _get_db()
+    doc_id = _log_doc_id(user_id, log_date)
+    doc = await db.collection("daily_logs").document(doc_id).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    data["id"] = doc.id
+    return data
 
 
 async def get_recent_logs(user_id: str, days: int = 7) -> List[Dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM daily_logs WHERE user_id=? ORDER BY log_date DESC LIMIT ?",
-            (user_id, days),
-        ) as cur:
-            rows = await cur.fetchall()
-            result = []
-            for row in rows:
-                d = dict(row)
-                d["food_intake"] = json.loads(d["food_intake"])
-                result.append(d)
-            return result
+    db = _get_db()
+    query = (
+        db.collection("daily_logs")
+        .where(filter=FieldFilter("user_id", "==", user_id))
+        .order_by("log_date", direction=firestore.Query.DESCENDING)
+        .limit(days)
+    )
+    result = []
+    async for doc in query.stream():
+        data = doc.to_dict()
+        data["id"] = doc.id
+        result.append(data)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -351,32 +304,34 @@ async def get_recent_logs(user_id: str, days: int = 7) -> List[Dict]:
 
 async def save_adjustment(
     user_id: str, adjustment_date: str, reason: str, changes: Dict
-) -> int:
+) -> str:
+    """Save an adjustment record. Returns the Firestore document ID (str)."""
+    db = _get_db()
     now = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            """INSERT INTO adjustments (user_id, adjustment_date, reason, changes, created_at)
-               VALUES (?,?,?,?,?)""",
-            (user_id, adjustment_date, reason, json.dumps(changes), now),
-        )
-        await db.commit()
-        return cur.lastrowid
+    _ts, doc_ref = await db.collection("adjustments").add({
+        "user_id": user_id,
+        "adjustment_date": adjustment_date,
+        "reason": reason,
+        "changes": changes,
+        "created_at": now,
+    })
+    return doc_ref.id
 
 
 async def get_adjustments(user_id: str, target_date: str) -> List[Dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM adjustments WHERE user_id=? AND adjustment_date=? ORDER BY id DESC",
-            (user_id, target_date),
-        ) as cur:
-            rows = await cur.fetchall()
-            result = []
-            for row in rows:
-                d = dict(row)
-                d["changes"] = json.loads(d["changes"])
-                result.append(d)
-            return result
+    db = _get_db()
+    query = (
+        db.collection("adjustments")
+        .where(filter=FieldFilter("user_id", "==", user_id))
+        .where(filter=FieldFilter("adjustment_date", "==", target_date))
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
+    )
+    result = []
+    async for doc in query.stream():
+        data = doc.to_dict()
+        data["id"] = doc.id
+        result.append(data)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -384,25 +339,30 @@ async def get_adjustments(user_id: str, target_date: str) -> List[Dict]:
 # ---------------------------------------------------------------------------
 
 async def append_chat(user_id: str, role: str, content: str) -> None:
+    db = _get_db()
     now = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO chat_history (user_id, role, content, created_at) VALUES (?,?,?,?)",
-            (user_id, role, content, now),
-        )
-        await db.commit()
+    await db.collection("chat_history").add({
+        "user_id": user_id,
+        "role": role,
+        "content": content,
+        "created_at": now,
+    })
 
 
 async def get_chat_history(user_id: str, limit: int = 20) -> List[Dict[str, str]]:
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT role, content FROM chat_history
-               WHERE user_id=? ORDER BY id DESC LIMIT ?""",
-            (user_id, limit),
-        ) as cur:
-            rows = await cur.fetchall()
-            return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+    db = _get_db()
+    query = (
+        db.collection("chat_history")
+        .where(filter=FieldFilter("user_id", "==", user_id))
+        .order_by("created_at", direction=firestore.Query.DESCENDING)
+        .limit(limit)
+    )
+    rows: List[Dict[str, str]] = []
+    async for doc in query.stream():
+        d = doc.to_dict()
+        rows.append({"role": d["role"], "content": d["content"]})
+    rows.reverse()  # oldest first
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -410,46 +370,53 @@ async def get_chat_history(user_id: str, limit: int = 20) -> List[Dict[str, str]
 # ---------------------------------------------------------------------------
 
 async def record_weight(user_id: str, weight: float) -> None:
-    """Insert a new weight snapshot. Called every time the user's weight is saved."""
+    db = _get_db()
     now = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO weight_history (user_id, weight, recorded_at) VALUES (?,?,?)",
-            (user_id, weight, now),
-        )
-        await db.commit()
+    await db.collection("weight_history").add({
+        "user_id": user_id,
+        "weight": weight,
+        "recorded_at": now,
+    })
 
 
 async def get_weight_change(user_id: str) -> Optional[float]:
     """
     Returns current_weight - first_recorded_weight.
-    Returns None if fewer than 2 snapshots exist (no meaningful delta yet).
+    Returns None if fewer than 2 snapshots exist.
     """
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT weight FROM weight_history WHERE user_id=? ORDER BY id ASC LIMIT 1",
-            (user_id,),
-        ) as cur:
-            first_row = await cur.fetchone()
-        async with db.execute(
-            "SELECT weight FROM weight_history WHERE user_id=? ORDER BY id DESC LIMIT 1",
-            (user_id,),
-        ) as cur:
-            last_row = await cur.fetchone()
+    db = _get_db()
+    col = db.collection("weight_history")
 
-    if not first_row or not last_row:
+    # First recorded weight (ASC)
+    first_query = (
+        col.where(filter=FieldFilter("user_id", "==", user_id))
+        .order_by("recorded_at", direction=firestore.Query.ASCENDING)
+        .limit(1)
+    )
+    first_w = None
+    async for doc in first_query.stream():
+        first_w = doc.to_dict()["weight"]
+
+    # Last recorded weight (DESC)
+    last_query = (
+        col.where(filter=FieldFilter("user_id", "==", user_id))
+        .order_by("recorded_at", direction=firestore.Query.DESCENDING)
+        .limit(1)
+    )
+    last_w = None
+    async for doc in last_query.stream():
+        last_w = doc.to_dict()["weight"]
+
+    if first_w is None or last_w is None:
         return None
-    first_w = first_row["weight"]
-    last_w  = last_row["weight"]
-    # Only return a delta if weight was recorded at least twice
-    if first_w == last_w and first_row["weight"] == last_row["weight"]:
-        # Check row count to distinguish single entry from same-value updates
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT COUNT(*) FROM weight_history WHERE user_id=?", (user_id,)
-            ) as cur:
-                count = (await cur.fetchone())[0]
+
+    # Check if there are at least 2 entries
+    if first_w == last_w:
+        count = 0
+        count_query = col.where(filter=FieldFilter("user_id", "==", user_id)).limit(2)
+        async for _ in count_query.stream():
+            count += 1
         if count < 2:
             return None
+
     return round(last_w - first_w, 1)
