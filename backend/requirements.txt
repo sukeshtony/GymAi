@@ -1,10 +1,10 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-google-adk>=1.0.0
-google-genai>=1.0.0
-google-cloud-firestore>=2.19.0
+fastapi==0.124.1
+uvicorn[standard]==0.34.0
+google-adk==1.28.1
+google-genai==1.70.0
+google-cloud-firestore==2.26.0
 python-dotenv==1.0.1
-pydantic==2.9.2
+pydantic==2.12.5
 python-multipart==0.0.12
 passlib==1.7.4
 bcrypt==3.2.2

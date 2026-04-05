@@ -70,10 +70,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve frontend static files
-frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if os.path.isdir(frontend_dir):
-    app.mount("/app", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+# Frontend static files will be mounted at the bottom of this file
 
 coordinator = CoordinatorAgent()
 
@@ -346,6 +343,12 @@ async def generate_plan(
         raise HTTPException(400, plan["error"])
     return {"success": True, "plan": plan}
 
+# ---------------------------------------------------------------------------
+# Mount Frontend (Must be last to not override API routes)
+# ---------------------------------------------------------------------------
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+if os.path.isdir(frontend_dir):
+    app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn
