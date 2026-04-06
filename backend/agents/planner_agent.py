@@ -46,9 +46,9 @@ OUTPUT FORMAT – return ONLY this JSON (no extra text):
       "workout_start": "<HH:MM>",
       "workout_end": "<HH:MM>",
       "exercises": [
-        {"name": "Push-ups", "sets": 3, "reps": "12-15", "duration_min": null, "notes": ""},
-        {"name": "Pike Push-ups", "sets": 3, "reps": "10", "duration_min": null, "notes": ""},
-        {"name": "Tricep Dips", "sets": 3, "reps": "12", "duration_min": null, "notes": ""}
+        {"name": "Push-ups", "sets": 3, "reps": "12-15", "duration_min": 0, "notes": ""},
+        {"name": "Pike Push-ups", "sets": 3, "reps": "10", "duration_min": 0, "notes": ""},
+        {"name": "Tricep Dips", "sets": 3, "reps": "12", "duration_min": 0, "notes": ""}
       ],
       "meals": [
         {"meal_type": "breakfast", "items": ["Oats with banana", "Green tea"], "calories": 350, "protein_g": 12, "notes": ""},

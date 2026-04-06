@@ -46,6 +46,8 @@ HANDLING SCOPE:
 - "I don't like X" → remove X from all days it appears.
 - "Change my diet plan" → modify meals for all 7 days.
 - "Replace exercises this week" → modify exercises for all remaining pending days.
+- When modifying meals, you can provide just the specific meal(s) that need changing (e.g. just 'lunch').
+- The system will merge these with existing meals for that day, so other meals (like breakfast) are preserved.
 - Be smart about scope — don't modify completed/missed days unless the user insists.
 
 Always pass structured day objects to tool_modify_plan_days — include ONLY the fields you are changing

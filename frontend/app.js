@@ -349,19 +349,33 @@ function renderDayDetail(data, dateStr) {
     return;
   }
 
-  const exercisesHTML = (plan.exercises || []).map(ex => `
-    <li class="exercise-item">
-      <div>
-        <div class="ex-name">${ex.name}</div>
-        <div class="ex-meta">${ex.sets ? ex.sets + ' sets × ' + ex.reps : ''}${ex.duration_min ? ex.duration_min + ' min' : ''}${ex.notes ? ' · ' + ex.notes : ''}</div>
-      </div>
-    </li>`).join('');
+  const exercisesHTML = (plan.exercises || []).map(ex => {
+    const parts = [];
+    if (ex.sets) {
+      let s = `${ex.sets} sets`;
+      if (ex.reps && ex.reps !== "null" && ex.reps !== null) s += ` × ${ex.reps}`;
+      parts.push(s);
+    }
+    if (ex.duration_min && ex.duration_min !== "null" && ex.duration_min !== null) {
+      parts.push(`${ex.duration_min} min`);
+    }
+    if (ex.notes) {
+      parts.push(ex.notes);
+    }
+    return `
+      <li class="exercise-item">
+        <div>
+          <div class="ex-name">${ex.name}</div>
+          <div class="ex-meta">${parts.join(' · ')}</div>
+        </div>
+      </li>`;
+  }).join('');
 
   const mealsHTML = (plan.meals || []).map(m => `
     <li class="meal-item" style="flex-direction:column;align-items:flex-start;gap:4px">
       <div class="meal-type">${m.meal_type}</div>
       <div class="meal-foods">${m.items?.join(', ')}</div>
-      <div class="meal-cals">${m.calories} kcal · ${m.protein_g || '?'}g protein</div>
+      <div class="meal-cals">${m.calories} kcal · ${m.protein_g && m.protein_g !== "null" ? m.protein_g + 'g protein' : '? protein'}</div>
     </li>`).join('');
 
   const adjHTML = adjs.map(a => `

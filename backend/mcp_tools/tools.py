@@ -380,7 +380,27 @@ async def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Any:
                     if "exercises" in change:
                         day["exercises"] = change["exercises"]
                     if "meals" in change:
-                        day["meals"] = change["meals"]
+                        # Merge meals by meal_type to avoid deleting other meals for the day
+                        new_meals = {m["meal_type"]: m for m in change["meals"]}
+                        existing_meals = day.get("meals", [])
+                        merged = []
+                        done_types = set()
+                        
+                        for m in existing_meals:
+                            if m["meal_type"] in new_meals:
+                                merged.append(new_meals[m["meal_type"]])
+                                done_types.add(m["meal_type"])
+                            else:
+                                merged.append(m)
+                        
+                        # Add any new meal types not in existing set
+                        for m in change["meals"]:
+                            if m["meal_type"] not in done_types:
+                                merged.append(m)
+                        
+                        # Sort for display consistency
+                        order = {"breakfast": 0, "lunch": 1, "snack": 2, "dinner": 3}
+                        day["meals"] = sorted(merged, key=lambda x: order.get(x["meal_type"], 9))
                     if "workout_type" in change:
                         day["workout_type"] = change["workout_type"]
                     if "total_calories" in change:
