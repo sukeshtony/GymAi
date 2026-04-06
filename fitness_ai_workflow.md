@@ -1,12 +1,12 @@
-# GymAI Core Workflows and User Journey
+# FitnessAI Core Workflows and User Journey
 
-This document outlines the operational flow, user journey, and how the multi-agent system interacts to provide a seamless health and fitness experience in the GymAI application. These workflows can be mapped directly into use-case diagrams or flowcharts for a presentation.
+This document outlines the operational flow, user journey, and how the multi-agent system interacts to provide a seamless health and fitness experience in the FitnessAI application. These workflows can be mapped directly into use-case diagrams or flowcharts for a presentation.
 
 ---
 
 ## 1. High-Level User Lifecycle
 
-The user’s journey through GymAI is designed as an iterative, conversational flow guided by the AI.
+The user’s journey through FitnessAI is designed as an iterative, conversational flow guided by the AI.
 
 1. **Onboarding (Initial State)**
    *   **Trigger:** A new user signs in and sends their first message.

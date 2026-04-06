@@ -1,12 +1,12 @@
-# GymAI Application Architecture Overview
+# FitnessAI Application Architecture Overview
 
-This document provides a detailed breakdown of the technical components used in the GymAI application. It is structured to help you easily extract the information for a PowerPoint (PPT) presentation.
+This document provides a detailed breakdown of the technical components used in the FitnessAI application. It is structured to help you easily extract the information for a PowerPoint (PPT) presentation.
 
 ---
 
 ## 1. Multi-Agent System (ADK Agents)
 
-GymAI utilizes a sophisticated multi-agent architecture built on the Google ADK (Agent Development Kit). At the core, it employs a router pattern where a primary coordinator assigns tasks to specialized sub-agents based on the user's intent.
+FitnessAI utilizes a sophisticated multi-agent architecture built on the Google ADK (Agent Development Kit). At the core, it employs a router pattern where a primary coordinator assigns tasks to specialized sub-agents based on the user's intent.
 
 ### **CoordinatorAgent**
 - **Role:** The primary entry point for all chat requests.

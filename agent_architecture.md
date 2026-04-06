@@ -1,10 +1,10 @@
-# GymAI Agent Architecture & Workflows
+# FitnessAI Agent Architecture & Workflows
 
-This document outlines the multi-agent architecture of the GymAI application, detailing the purpose of each AI agent and exactly when and how they are invoked.
+This document outlines the multi-agent architecture of the FitnessAI application, detailing the purpose of each AI agent and exactly when and how they are invoked.
 
 ## Overview
 
-GymAI uses a multi-agent system where different specialized agents handle specific aspects of the user's fitness journey. The application is built on FastAPI (`backend/main.py`), which exposes REST API endpoints. Most chat interactions are routed through a central **Coordinator Agent**, while other endpoints directly invoke specific agents.
+FitnessAI uses a multi-agent system where different specialized agents handle specific aspects of the user's fitness journey. The application is built on FastAPI (`backend/main.py`), which exposes REST API endpoints. Most chat interactions are routed through a central **Coordinator Agent**, while other endpoints directly invoke specific agents.
 
 ---
 

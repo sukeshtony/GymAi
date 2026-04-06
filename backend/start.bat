@@ -19,7 +19,7 @@ call venv\Scripts\activate.bat
 pip install -q -r requirements.txt
 
 echo.
-echo  GymAI Multi-Agent Fitness Backend
+echo  FitnessAI Multi-Agent Fitness Backend
 echo  http://localhost:8000
 echo  API Docs: http://localhost:8000/docs
 echo  Frontend: open frontend\index.html in your browser

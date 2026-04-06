@@ -1,5 +1,5 @@
 #!/bin/bash
-# ── GymAI Backend Startup ──────────────────────────────
+# ── FitnessAI Backend Startup ──────────────────────────────
 set -e
 
 cd "$(dirname "$0")"
@@ -24,7 +24,7 @@ pip install -q -r requirements.txt
 
 echo ""
 echo "╔══════════════════════════════════════════════╗"
-echo "║  🏋️  GymAI Multi-Agent Fitness Backend        ║"
+echo "║  🏋️  FitnessAI Multi-Agent Fitness Backend        ║"
 echo "║  http://localhost:8000                        ║"
 echo "║  Docs: http://localhost:8000/docs             ║"
 echo "║  Frontend: open frontend/index.html           ║"

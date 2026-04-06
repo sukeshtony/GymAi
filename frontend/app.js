@@ -1,5 +1,5 @@
 /* =========================================================
-   GymAI – Frontend Application
+   FitnessAI – Frontend Application
    ========================================================= */
 
 // If opened via file:// or running locally, point to localhost:8000. 
@@ -85,7 +85,7 @@ function showToast(msg, type = 'success') {
 // ── User ID Management ─────────────────────────────────────
 
 function initUserId() {
-  const uid = localStorage.getItem('gymai_user_id');
+  const uid = localStorage.getItem('fitnessai_user_id');
   const appShell = document.getElementById('app-shell');
   const authShell = document.getElementById('auth-shell');
 
@@ -99,7 +99,7 @@ function initUserId() {
   authShell.style.display = 'none';
   
   state.userId = uid;
-  const uname = localStorage.getItem('gymai_user_name') || 'Athlete';
+  const uname = localStorage.getItem('fitnessai_user_name') || 'Athlete';
   document.querySelector('.user-info .uid').textContent = uid.slice(0, 12) + '…';
   document.querySelector('.user-info .name').textContent = uname;
   
@@ -129,8 +129,8 @@ async function handleLogin() {
 
   try {
     const res = await apiPost('/login', { email, password });
-    localStorage.setItem('gymai_user_id', res.user_id);
-    localStorage.setItem('gymai_user_name', res.name || 'Athlete');
+    localStorage.setItem('fitnessai_user_id', res.user_id);
+    localStorage.setItem('fitnessai_user_name', res.name || 'Athlete');
     showToast('Logged in successfully', 'success');
     initUserId();
   } catch (e) {
@@ -154,8 +154,8 @@ async function handleRegister() {
 
   try {
     const res = await apiPost('/register', { email, password, name });
-    localStorage.setItem('gymai_user_id', res.user_id);
-    localStorage.setItem('gymai_user_name', res.name || 'Athlete');
+    localStorage.setItem('fitnessai_user_id', res.user_id);
+    localStorage.setItem('fitnessai_user_name', res.name || 'Athlete');
     showToast('Registration successful!', 'success');
     initUserId();
   } catch (e) {
@@ -167,8 +167,8 @@ async function handleRegister() {
 }
 
 function handleLogout() {
-  localStorage.removeItem('gymai_user_id');
-  localStorage.removeItem('gymai_user_name');
+  localStorage.removeItem('fitnessai_user_id');
+  localStorage.removeItem('fitnessai_user_name');
   initUserId();
 }
 
@@ -214,7 +214,7 @@ function renderWelcomeDashboard() {
   document.getElementById('stat-total').textContent = '–';
   document.getElementById('stat-weight').textContent = '–';
   document.getElementById('motivation-text').textContent =
-    "Welcome to GymAI! Let's start by setting up your profile. Click the chat button 💬 to get started!";
+    "Welcome to FitnessAI! Let's start by setting up your profile. Click the chat button 💬 to get started!";
   document.getElementById('recent-logs-body').innerHTML =
     '<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:20px">No logs yet</td></tr>';
 }

@@ -1,5 +1,5 @@
 """
-GymAI – FastAPI Backend
+FitnessAI – FastAPI Backend
 ========================
 Endpoints:
   POST /chat          → main chatbot entry point
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(
-    title="GymAI – Multi-Agent Fitness Assistant",
+    title="FitnessAI – Multi-Agent Fitness Assistant",
     version="1.0.0",
     lifespan=lifespan,
 )
