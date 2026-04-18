@@ -682,3 +682,61 @@ textarea:focus {
   margin-bottom: 6px;
   font-weight: 500;
 }
+
+/* ── Progress Messages (Chat) ── */
+.msg-progress {
+  background: linear-gradient(135deg, rgba(108,99,255,0.1), rgba(168,85,247,0.08)) !important;
+  border: 1px solid rgba(108,99,255,0.25);
+}
+
+.progress-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.progress-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(108,99,255,0.3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ── Notification Banner ── */
+.notification-banner {
+  position: fixed;
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 28px;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  z-index: 10000;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  transition: top 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.notification-banner.show {
+  top: 20px;
+  pointer-events: auto;
+}
+
+.notification-banner.success {
+  background: linear-gradient(135deg, #15803d, #166534);
+  color: #dcfce7;
+  border: 1px solid rgba(34,197,94,0.4);
+}
+
+.notification-banner.error {
+  background: linear-gradient(135deg, #991b1b, #7f1d1d);
+  color: #fecaca;
+  border: 1px solid rgba(239,68,68,0.4);
+}

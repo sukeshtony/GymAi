@@ -6,9 +6,12 @@ Generates a structured 7-day workout + diet plan using ADK LlmAgent.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import InMemoryRunner
@@ -79,10 +82,11 @@ class PlannerAgent(BaseAgent):
     ) -> Dict[str, Any]:
         """
         Full plan generation flow:
-        1. Load user profile from DB
-        2. Ask LLM to generate the plan JSON
-        3. Parse + save to DB
-        4. Return the plan
+        1. Validate user profile completeness
+        2. Apply smart defaults for optional fields
+        3. Ask LLM to generate the plan JSON (with retry)
+        4. Parse + save to DB
+        5. Return the plan
         """
         if not week_start:
             today = date.today()
@@ -93,63 +97,134 @@ class PlannerAgent(BaseAgent):
         if not profile:
             return {"error": "User profile not found. Please complete onboarding first."}
 
-        # Build prompt with all profile details
+        # ── Validate critical fields ──
+        critical_fields = ["goal", "weight", "diet_type"]
+        missing_critical = [
+            f for f in critical_fields
+            if not profile.get(f) or profile.get(f) in (0, "", None)
+        ]
+        if missing_critical:
+            return {
+                "error": (
+                    f"Cannot generate plan — missing critical data: {', '.join(missing_critical)}. "
+                    "Please complete your profile first."
+                )
+            }
+
+        # ── Smart defaults for optional fields (with logging) ──
+        defaults_applied = []
+        if not profile.get("height"):
+            profile["height"] = 170
+            defaults_applied.append("height (defaulted to 170 cm)")
+        if not profile.get("workout_start"):
+            profile["workout_start"] = "07:00"
+            defaults_applied.append("workout_start (defaulted to 07:00)")
+        if not profile.get("workout_end"):
+            profile["workout_end"] = "08:00"
+            defaults_applied.append("workout_end (defaulted to 08:00)")
+        if not profile.get("location"):
+            profile["location"] = "India"
+            defaults_applied.append("location (defaulted to India)")
+        if not profile.get("food_access"):
+            profile["food_access"] = "home"
+            defaults_applied.append("food_access (defaulted to home)")
+
+        if defaults_applied:
+            logger.warning(
+                f"Plan generation for {user_id} used defaults: {', '.join(defaults_applied)}"
+            )
+
+        # ── Build prompt ──
         prompt = f"""
 Generate a 7-day fitness and diet plan for this user:
 
 User ID: {user_id}
-Goal: {profile.get('goal', 'not set')}
-Weight: {profile.get('weight', 'unknown')} kg
-Height: {profile.get('height', 'unknown')} cm
-Workout window: {profile.get('workout_start', '07:00')} to {profile.get('workout_end', '08:00')}
-Location: {profile.get('location', 'India')}
-Diet type: {profile.get('diet_type', 'veg')}
-Food access: {profile.get('food_access', 'home')}
+Goal: {profile.get('goal')}
+Weight: {profile.get('weight')} kg
+Height: {profile.get('height')} cm
+Workout window: {profile.get('workout_start')} to {profile.get('workout_end')}
+Location: {profile.get('location')}
+Diet type: {profile.get('diet_type')}
+Food access: {profile.get('food_access')}
 Week start (Monday): {week_start}
 
 The days array must have exactly 7 entries, starting from {week_start}.
 """
 
-        # Use a dedicated ADK LlmAgent for plan generation (no tools needed here)
-        agent = LlmAgent(
-            name="PlanGenerator",
-            model=MODEL,
-            instruction=self.system_prompt,
-        )
+        # ── Generate with retry on JSON parse failure ──
+        plan_data = await self._generate_with_retry(user_id, prompt, max_attempts=2)
 
-        runner = InMemoryRunner(agent=agent, app_name="PlanGenerator")
-        runner.auto_create_session = True
-        user_content = Content(parts=[Part.from_text(text=prompt)])
-
-        reply_parts: List[str] = []
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=f"plan_{user_id}",
-            new_message=user_content,
-        ):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        reply_parts.append(part.text)
-
-        raw_text = "".join(reply_parts).strip()
-
-        # Extract JSON from response (handle markdown code blocks)
-        if "```json" in raw_text:
-            raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in raw_text:
-            raw_text = raw_text.split("```")[1].split("```")[0].strip()
-
-        try:
-            plan_data = json.loads(raw_text)
-        except json.JSONDecodeError as e:
-            return {"error": f"Failed to parse plan JSON: {e}", "raw": raw_text}
+        if plan_data is None:
+            return {
+                "error": (
+                    "I had trouble generating your plan. "
+                    "This usually resolves itself — please try again in a moment."
+                )
+            }
 
         # Save to database
         plan_id = await db.save_weekly_plan(user_id, week_start, plan_data)
         plan_data["db_id"] = plan_id
 
         return plan_data
+
+    async def _generate_with_retry(
+        self, user_id: str, prompt: str, max_attempts: int = 2
+    ) -> Optional[Dict[str, Any]]:
+        """Call the LLM and parse JSON, retrying with a stricter prompt on failure."""
+        last_error = None
+
+        for attempt in range(max_attempts):
+            instruction = self.system_prompt
+            if attempt > 0:
+                # Stricter prompt on retry
+                instruction += (
+                    "\n\nCRITICAL: Your PREVIOUS response was not valid JSON. "
+                    "Return ONLY the raw JSON object. No markdown, no code fences, "
+                    "no commentary. Start with { and end with }."
+                )
+                logger.info(f"Plan generation retry #{attempt} for user {user_id}")
+
+            agent = LlmAgent(
+                name="PlanGenerator",
+                model=MODEL,
+                instruction=instruction,
+            )
+
+            runner = InMemoryRunner(agent=agent, app_name="PlanGenerator")
+            runner.auto_create_session = True
+            user_content = Content(parts=[Part.from_text(text=prompt)])
+
+            reply_parts: List[str] = []
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=f"plan_{user_id}_{attempt}",
+                new_message=user_content,
+            ):
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            reply_parts.append(part.text)
+
+            raw_text = "".join(reply_parts).strip()
+
+            # Extract JSON from response (handle markdown code blocks)
+            if "```json" in raw_text:
+                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw_text:
+                raw_text = raw_text.split("```")[1].split("```")[0].strip()
+
+            try:
+                return json.loads(raw_text)
+            except json.JSONDecodeError as e:
+                last_error = e
+                logger.warning(
+                    f"Plan JSON parse failed (attempt {attempt + 1}/{max_attempts}) "
+                    f"for {user_id}: {e}"
+                )
+
+        logger.error(f"Plan generation failed after {max_attempts} attempts for {user_id}")
+        return None
 
     async def run(
         self,

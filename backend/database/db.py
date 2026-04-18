@@ -161,9 +161,20 @@ async def update_user_state(user_id: str, fields: Dict[str, Any]) -> Dict[str, A
     return state
 
 
+def _is_field_empty(value) -> bool:
+    """Check if a profile field should be considered missing/empty."""
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    if isinstance(value, (int, float)) and value == 0:
+        return True
+    return False
+
+
 async def recalculate_missing_fields(user_id: str) -> List[str]:
     user = await get_user(user_id) or {}
-    missing = [f for f in REQUIRED_FIELDS if not user.get(f)]
+    missing = [f for f in REQUIRED_FIELDS if _is_field_empty(user.get(f))]
     state = await get_user_state(user_id)
     state["missing_fields"] = missing
     state["onboarding_complete"] = 1 if not missing else 0

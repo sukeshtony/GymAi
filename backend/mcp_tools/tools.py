@@ -11,10 +11,14 @@ blocks to execute_tool() to get real results back.
 from __future__ import annotations
 
 import json
+import re
+import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
 from database import db
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -226,11 +230,80 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 # Tool Executor
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+_TIME_RE = re.compile(r"^\d{1,2}:\d{2}$")
+_VALID_GOALS = {"weight_loss", "muscle_gain", "maintenance"}
+_VALID_DIET_TYPES = {"veg", "non_veg", "vegan"}
+_VALID_FOOD_ACCESS = {"home", "hostel", "outside"}
+
+
+def _validate_profile_fields(fields: Dict[str, Any]) -> List[str]:
+    """Return a list of human-readable validation errors."""
+    errors: List[str] = []
+
+    if "weight" in fields:
+        w = fields["weight"]
+        if not isinstance(w, (int, float)) or w < 20 or w > 300:
+            errors.append(f"Weight must be between 20 and 300 kg (got {w}).")
+
+    if "height" in fields:
+        h = fields["height"]
+        if not isinstance(h, (int, float)) or h < 50 or h > 250:
+            errors.append(f"Height must be between 50 and 250 cm (got {h}).")
+
+    if "workout_start" in fields:
+        t = str(fields["workout_start"])
+        if not _TIME_RE.match(t):
+            errors.append(
+                f"workout_start must be in HH:MM format (got '{t}'). "
+                "Please ask the user to provide the time as e.g. 07:00."
+            )
+
+    if "workout_end" in fields:
+        t = str(fields["workout_end"])
+        if not _TIME_RE.match(t):
+            errors.append(
+                f"workout_end must be in HH:MM format (got '{t}'). "
+                "Please ask the user to provide the time as e.g. 08:00."
+            )
+
+    if "goal" in fields and fields["goal"] not in _VALID_GOALS:
+        errors.append(
+            f"goal must be one of {_VALID_GOALS} (got '{fields['goal']}')."
+        )
+
+    if "diet_type" in fields and fields["diet_type"] not in _VALID_DIET_TYPES:
+        errors.append(
+            f"diet_type must be one of {_VALID_DIET_TYPES} (got '{fields['diet_type']}')."
+        )
+
+    if "food_access" in fields and fields["food_access"] not in _VALID_FOOD_ACCESS:
+        errors.append(
+            f"food_access must be one of {_VALID_FOOD_ACCESS} (got '{fields['food_access']}')."
+        )
+
+    return errors
+
+
 async def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Any:
     """Dispatch a Claude tool_use call to the correct DB operation."""
 
     if tool_name == "save_user_profile":
         user_id = tool_input.pop("user_id")
+
+        # Validate before saving
+        validation_errors = _validate_profile_fields(tool_input)
+        if validation_errors:
+            logger.warning(f"Profile validation failed for {user_id}: {validation_errors}")
+            return {
+                "success": False,
+                "validation_errors": validation_errors,
+                "message": "Some fields have invalid values. Please correct and try again.",
+            }
+
         new_weight = tool_input.get("weight")
         updated = await db.upsert_user(user_id, tool_input)
         # Record a weight snapshot every time weight is explicitly provided
@@ -444,12 +517,16 @@ def _this_monday() -> str:
 # Each function delegates to execute_tool() to avoid duplicating logic.
 # ---------------------------------------------------------------------------
 
+# Sentinel to distinguish "not provided" from falsy values like 0 or ""
+_NOT_PROVIDED = object()
+
+
 async def tool_save_user_profile(
     user_id: str,
     name: str = "",
     goal: str = "",
-    weight: float = 0,
-    height: float = 0,
+    weight: float = _NOT_PROVIDED,
+    height: float = _NOT_PROVIDED,
     workout_start: str = "",
     workout_end: str = "",
     location: str = "",
@@ -468,15 +545,15 @@ async def tool_save_user_profile(
     Returns the updated profile and list of missing fields.
     """
     args: Dict[str, Any] = {"user_id": user_id}
-    if name:          args["name"] = name
-    if goal:          args["goal"] = goal
-    if weight:        args["weight"] = weight
-    if height:        args["height"] = height
-    if workout_start: args["workout_start"] = workout_start
-    if workout_end:   args["workout_end"] = workout_end
-    if location:      args["location"] = location
-    if diet_type:     args["diet_type"] = diet_type
-    if food_access:   args["food_access"] = food_access
+    if name:                          args["name"] = name
+    if goal:                          args["goal"] = goal
+    if weight is not _NOT_PROVIDED:   args["weight"] = weight
+    if height is not _NOT_PROVIDED:   args["height"] = height
+    if workout_start:                 args["workout_start"] = workout_start
+    if workout_end:                   args["workout_end"] = workout_end
+    if location:                      args["location"] = location
+    if diet_type:                     args["diet_type"] = diet_type
+    if food_access:                   args["food_access"] = food_access
     return await execute_tool("save_user_profile", args)
 
 

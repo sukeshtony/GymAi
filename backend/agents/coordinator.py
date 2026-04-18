@@ -65,7 +65,12 @@ class CoordinatorAgent:
         message: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
-        """Main entry point. Returns {reply, intent, structured_data}."""
+        """Main entry point. Returns {reply, intent, structured_data}.
+
+        When a slow background operation is needed (e.g. plan generation),
+        this returns a 'background_task' key instead of blocking.
+        The caller (main.py) is responsible for spawning the background work.
+        """
 
         history = conversation_history or []
 
@@ -92,13 +97,18 @@ class CoordinatorAgent:
             # After profile update, check if we should auto-generate plan
             updated_state = await db.get_user_state(user_id)
             if updated_state.get("onboarding_complete") and not await db.get_weekly_plan(user_id):
-                plan_result = await self.planner_agent.run("generate", [], ctx)
+                # Signal background plan generation instead of blocking
                 result["reply"] += (
-                    "\n\n🗓️ Your personalized 7-day plan has been generated! "
-                    "Check the calendar tab to see your full week."
+                    "\n\n🗓️ Great news — your profile is complete! "
+                    "I'm generating your personalized 7-day plan now. "
+                    "This takes about 30 seconds. I'll notify you when it's ready!"
                 )
-                result["structured_data"] = {**result.get("structured_data", {}),
-                                             **(plan_result.get("structured_data", {}))}
+                return {
+                    "reply": result["reply"],
+                    "intent": "profile",
+                    "structured_data": result.get("structured_data", {}),
+                    "background_task": "plan_generation",
+                }
             return {
                 "reply": result["reply"],
                 "intent": "profile",
@@ -113,13 +123,17 @@ class CoordinatorAgent:
             # Auto-generate plan if just completed onboarding
             updated_state = await db.get_user_state(user_id)
             if updated_state.get("onboarding_complete") and not await db.get_weekly_plan(user_id):
-                plan_result = await self.planner_agent.run("generate", [], ctx)
                 result["reply"] += (
-                    "\n\n🗓️ Your 7-day plan is ready! "
-                    "Check the calendar to see your workouts and meals."
+                    "\n\n🗓️ Profile updated! "
+                    "I'm generating your personalized 7-day plan now. "
+                    "This takes about 30 seconds. I'll notify you when it's ready!"
                 )
-                result["structured_data"] = {**result.get("structured_data", {}),
-                                             **(plan_result.get("structured_data", {}))}
+                return {
+                    "reply": result["reply"],
+                    "intent": intent,
+                    "structured_data": result.get("structured_data", {}),
+                    "background_task": "plan_generation",
+                }
 
         elif intent == "log_activity":
             # Log via adjustment agent (which also calls log_daily_activity tool)
@@ -130,7 +144,21 @@ class CoordinatorAgent:
         elif intent == "get_plan":
             existing_plan = await db.get_weekly_plan(user_id)
             if not existing_plan:
-                result = await self.planner_agent.run("generate", [], ctx)
+                # Signal background plan generation
+                result = {
+                    "reply": (
+                        "You don't have a plan yet! "
+                        "I'm generating your personalized 7-day fitness plan now. "
+                        "This takes about 30 seconds — I'll let you know when it's ready! 💪"
+                    ),
+                    "structured_data": {},
+                }
+                return {
+                    "reply": result["reply"],
+                    "intent": intent,
+                    "structured_data": result["structured_data"],
+                    "background_task": "plan_generation",
+                }
             else:
                 # User wants to see/discuss the plan
                 result = await self.planner_agent.run(message, history, ctx)
@@ -139,12 +167,20 @@ class CoordinatorAgent:
         elif intent == "modify_plan":
             existing_plan = await db.get_weekly_plan(user_id)
             if not existing_plan:
-                # No plan to modify — generate one first
-                result = await self.planner_agent.run("generate", [], ctx)
-                result["reply"] = (
-                    "You don't have a plan yet, so I've generated one for you! "
-                    "You can now ask me to change any part of it."
-                )
+                # No plan to modify — signal background generation
+                result = {
+                    "reply": (
+                        "You don't have a plan yet, so I'm generating one for you first! "
+                        "This takes about 30 seconds. Once it's ready, you can ask me to change any part of it."
+                    ),
+                    "structured_data": {},
+                }
+                return {
+                    "reply": result["reply"],
+                    "intent": intent,
+                    "structured_data": result["structured_data"],
+                    "background_task": "plan_generation",
+                }
             else:
                 result = await self.modification_agent.run(message, history, ctx)
                 result["structured_data"]["refresh_calendar"] = True

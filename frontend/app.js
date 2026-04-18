@@ -493,11 +493,20 @@ async function submitLog(dateStr) {
       calories: calories,
       notes: '',
     });
-    showToast('Activity logged! ' + (res.adjustment_message ? '✓ Plan adjusted.' : ''), 'success');
-    // Reload calendar and detail
+
+    // Instant feedback
+    showToast('Activity logged! ✅', 'success');
     await loadCalendar();
-    if (res.adjustment_message) {
-      addChatMessage('assistant', '⚡ ' + res.adjustment_message);
+
+    // If there's a background adjustment task, poll for it
+    if (res.pending_task?.task_id) {
+      addChatMessage('assistant', '⚡ Analyzing your activity and adjusting your plan...');
+      pollTaskStatus(res.pending_task.task_id, (result) => {
+        if (result.status === 'completed' && result.message) {
+          addChatMessage('assistant', '⚡ ' + result.message);
+          loadCalendar();
+        }
+      });
     }
   } catch (e) {
     showToast('Failed to log: ' + e.message, 'error');
@@ -586,15 +595,36 @@ async function sendMessage() {
     hideTyping();
     addChatMessage('assistant', res.reply);
 
-    // If a plan was generated or modified, refresh calendar
-    if (res.structured_data?.plan || res.intent === 'get_plan' ||
-        res.intent === 'modify_plan' || res.structured_data?.plan_modified ||
-        res.structured_data?.refresh_calendar) {
-      setTimeout(() => {
-        loadCalendar();
-        if (state.currentView === 'calendar') loadDayDetail(state.selectedDate);
-      }, 500);
+    // If there's a pending background task, show progress and start polling
+    const pendingTask = res.structured_data?.pending_task;
+    if (pendingTask?.task_id) {
+      const progressId = addProgressMessage(pendingTask.message || 'Working on it...');
+      pollTaskStatus(pendingTask.task_id, (result) => {
+        removeProgressMessage(progressId);
+        if (result.status === 'completed') {
+          addChatMessage('assistant', result.message || 'Done! ✅');
+          // Refresh relevant views
+          if (pendingTask.type === 'plan_generation') {
+            loadCalendar();
+            showNotificationBanner('🎉 Your personalized fitness plan is ready!', 'success');
+          }
+        } else if (result.status === 'failed') {
+          addChatMessage('assistant', '⚠️ ' + (result.message || 'Something went wrong. Please try again.'));
+          showNotificationBanner('Plan generation failed. Try again.', 'error');
+        }
+      });
+    } else {
+      // Existing immediate-result handling
+      if (res.structured_data?.plan || res.intent === 'get_plan' ||
+          res.intent === 'modify_plan' || res.structured_data?.plan_modified ||
+          res.structured_data?.refresh_calendar) {
+        setTimeout(() => {
+          loadCalendar();
+          if (state.currentView === 'calendar') loadDayDetail(state.selectedDate);
+        }, 500);
+      }
     }
+
     // If profile was updated, refresh dashboard
     if (res.intent === 'profile') {
       setTimeout(() => {
@@ -612,6 +642,69 @@ async function sendMessage() {
     sendBtn.disabled = false;
     input.focus();
   }
+}
+
+// ── Background Task Polling ────────────────────────────────
+
+function pollTaskStatus(taskId, onComplete, intervalMs = 3000, maxAttempts = 40) {
+  let attempts = 0;
+  const poll = async () => {
+    attempts++;
+    try {
+      const res = await apiGet(`/task-status?task_id=${taskId}`);
+      if (res.status === 'completed' || res.status === 'failed') {
+        onComplete(res);
+        return;
+      }
+      if (attempts >= maxAttempts) {
+        onComplete({ status: 'failed', message: 'Task timed out. Please try again.' });
+        return;
+      }
+      setTimeout(poll, intervalMs);
+    } catch (e) {
+      if (attempts >= maxAttempts) {
+        onComplete({ status: 'failed', message: 'Could not check task status.' });
+      } else {
+        setTimeout(poll, intervalMs);
+      }
+    }
+  };
+  setTimeout(poll, intervalMs);
+}
+
+let _progressCounter = 0;
+
+function addProgressMessage(text) {
+  const container = document.getElementById('chat-messages');
+  const id = 'progress-' + (++_progressCounter);
+  const div = document.createElement('div');
+  div.id = id;
+  div.className = 'msg assistant msg-progress';
+  div.innerHTML = `
+    <div class="progress-content">
+      <div class="progress-spinner"></div>
+      <span>${text}</span>
+    </div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return id;
+}
+
+function removeProgressMessage(id) {
+  document.getElementById(id)?.remove();
+}
+
+function showNotificationBanner(message, type = 'success') {
+  let banner = document.getElementById('notification-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'notification-banner';
+    document.body.appendChild(banner);
+  }
+  banner.textContent = message;
+  banner.className = `notification-banner ${type} show`;
+  setTimeout(() => banner.classList.remove('show'), 5000);
 }
 
 function renderQuickChips(intent) {
